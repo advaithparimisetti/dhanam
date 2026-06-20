@@ -2,8 +2,21 @@ import axios from 'axios';
 import { auth } from '../firebase';
 
 // Base URL from env so dev (localhost) and prod (Render) differ only by config.
+// Resilient: the API is always mounted under /api/v1, so we auto-append that
+// segment if the configured base omits it. This makes the app work whether
+// VITE_API_BASE_URL is set to the bare host (https://dhanam.onrender.com) or the
+// full path (https://dhanam.onrender.com/api/v1) — removing a common deploy footgun.
+function resolveBaseURL() {
+  let base = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1').trim();
+  base = base.replace(/\/+$/, '');            // strip trailing slash(es)
+  if (!/\/api\/v\d+$/.test(base)) {           // append /api/v1 only if not already present
+    base += '/api/v1';
+  }
+  return base;
+}
+
 const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1',
+  baseURL: resolveBaseURL(),
   headers: { 'Content-Type': 'application/json' },
 });
 
