@@ -1,0 +1,20 @@
+# ---- Backend secrets (defense in depth — also covered by root .gitignore) ----
+.env
+.env.*
+!.env.example
+*serviceAccount*.json
+*firebase-adminsdk*.json
+*-adminsdk-*.json
+firebase-key*.json
+
+# ---- Python artifacts ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.sqlite3

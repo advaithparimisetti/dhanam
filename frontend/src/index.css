@@ -1,0 +1,157 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===========================================================================
+   Dhanaṁ — Techno-Functional Design System (dark-mode only)
+   - Inter for UI, Roboto Mono for all numeric/tabular data
+   - Strict grid, tabular linings, institutional green accent on near-black
+   - Removed Vite-template leftovers (#root 1126px cap, light-mode :root vars)
+   =========================================================================== */
+
+:root {
+  --bg-base: #050b08;       /* deepest canvas */
+  --bg-panel: #0a120e;      /* card / panel surface */
+  --bg-elev: #0e1813;       /* elevated surface */
+  --border: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --text-hi: #e6f0ea;       /* primary text */
+  --text-mid: #9aa7a0;      /* secondary */
+  --text-lo: #5f6c66;       /* tertiary / labels */
+  --accent: #2d7a3e;        /* institutional green */
+  --accent-bright: #aee7b1; /* highlight green */
+  --pos: #36c46f;           /* gains */
+  --neg: #f0616d;           /* losses */
+  --warn: #f5a623;          /* caution */
+  --info: #4f9fff;          /* neutral data series */
+
+  --sans: 'Inter', system-ui, 'Segoe UI', Roboto, sans-serif;
+  --mono: 'Roboto Mono', ui-monospace, Consolas, monospace;
+
+  color-scheme: dark;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg-base);
+  color: var(--text-hi);
+  font-family: var(--sans);
+  letter-spacing: 0.1px;
+  min-height: 100vh;
+}
+
+/* Full-bleed app shell — overrides the Vite starter's centered 1126px #root */
+#root {
+  width: 100%;
+  margin: 0;
+  text-align: left;
+  min-height: 100vh;
+}
+
+/* Tabular figures: numbers line up in columns across every data grid */
+.tabular,
+.font-mono,
+table {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: 'tnum' 1, 'lnum' 1;
+}
+
+/* ---- Scrollbars: thin, terminal-grade ---- */
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* ===========================================================================
+   Reusable component utilities
+   =========================================================================== */
+@layer components {
+  /* Glassmorphic panel — purposeful, low-opacity, crisp 1px border */
+  .glass {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0.005));
+    border: 1px solid var(--border);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+
+  /* Bento tile base */
+  .bento {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 1rem;
+    box-shadow: 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+    transition: border-color 0.25s ease, transform 0.25s ease;
+  }
+  .bento:hover {
+    border-color: var(--border-strong);
+  }
+
+  /* Subtle accent glow halo (place inside a relative, overflow-hidden parent) */
+  .glow-accent {
+    position: absolute;
+    width: 9rem;
+    height: 9rem;
+    border-radius: 9999px;
+    filter: blur(48px);
+    pointer-events: none;
+    opacity: 0.5;
+  }
+}
+
+/* ---- Skeleton shimmer — eliminates layout shift during async loads ---- */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 0.5rem;
+}
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.06),
+    transparent
+  );
+  animation: dhanam-shimmer 1.4s infinite;
+}
+@keyframes dhanam-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* Numeric value transitions (conditional-format color fades) */
+.val-pos { color: var(--pos); }
+.val-neg { color: var(--neg); }
+.val-mid { color: var(--text-mid); }
