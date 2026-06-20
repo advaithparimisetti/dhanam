@@ -1,5 +1,7 @@
 import os
-from fastapi import FastAPI
+import traceback
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from api.routes import router as api_router
 from core.rate_limit import limiter, HAS_SLOWAPI
@@ -38,6 +40,27 @@ if HAS_SLOWAPI:
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.include_router(api_router, prefix="/api/v1")
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    # Starlette's ServerErrorMiddleware (which renders unhandled 500s) sits OUTSIDE
+    # CORSMiddleware, so a raw exception would return without CORS headers — the
+    # browser then reports a misleading "CORS error" instead of the real failure.
+    # We re-attach the CORS headers here so the client sees the actual 500 and can
+    # degrade gracefully. Transient upstream (yfinance) hiccups land here.
+    traceback.print_exc()
+    origin = request.headers.get("origin")
+    headers = {}
+    if origin and origin.rstrip("/") in allowed_origins:
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
+        headers["Vary"] = "Origin"
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "A transient backend error occurred. Please retry."},
+        headers=headers,
+    )
 
 
 @app.on_event("startup")

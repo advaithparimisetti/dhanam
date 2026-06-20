@@ -3,8 +3,9 @@ import Plot from 'react-plotly.js';
 import { Target, TrendingUp, TrendingDown, AlertOctagon, Layers, Dice5, Scale, Activity } from 'lucide-react';
 import {
   Panel, StatTile, Badge, EmptyState, DataTable,
-  fmtMoney, fmtBig, fmtPct, fmtNum, fmtX, plotlyDark, plotlyConfig,
+  fmtMoney, fmtBig, fmtPct, fmtNum, fmtX, sym, plotlyDark, plotlyConfig,
 } from '../common/ui';
+import { useMode } from '../../context/ModeContext';
 
 /* ===========================================================================
    ValuationModels — institutional valuation cockpit.
@@ -13,6 +14,7 @@ import {
    gracefully when the engine flags degraded data.
    =========================================================================== */
 const ValuationModels = ({ data }) => {
+  const { pro } = useMode();
   const cur = data.currency || 'USD';
   const price = data.price || 0;
   const v = data.valuation || {};
@@ -42,6 +44,65 @@ const ValuationModels = ({ data }) => {
   const upside = dcf.upside_pct != null ? dcf.upside_pct / 100 : (fairValue - price) / price;
   const undervalued = upside > 0;
 
+  // ===================== BEGINNER: "Value Meter" speedometer =====================
+  if (!pro) {
+    const upPct = Math.abs(upside * 100);
+    const verdict = undervalued
+      ? `Good value — ${data.ticker} is trading about ${upPct.toFixed(0)}% below what our models think it's worth.`
+      : `Looks pricey — ${data.ticker} is trading about ${upPct.toFixed(0)}% above what our models think it's worth.`;
+    return (
+      <div className="flex w-full flex-col gap-6 animate-in fade-in duration-500">
+        <p className="text-lg text-dhanam-text-mid">
+          Our models suggest a fair value of{' '}
+          <span className="font-mono font-semibold text-dhanam-accent">{fmtMoney(fairValue, cur)}</span> per share.
+        </p>
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <Panel className="lg:col-span-2" title="Value Meter" subtitle="Where today's price sits versus our fair value">
+            <div className="h-[300px] w-full">
+              <Plot
+                data={[{
+                  type: 'indicator', mode: 'gauge+number',
+                  value: price,
+                  number: { font: { size: 40, color: '#E6F0EA', family: 'Roboto Mono' }, prefix: sym(cur) },
+                  gauge: {
+                    axis: { range: [Math.max(0, fairValue * 0.5), fairValue * 1.5], tickprefix: cur === 'USD' ? '$' : '', tickfont: { size: 10, color: '#5F6C66' } },
+                    bar: { color: '#E6F0EA', thickness: 0.18 },
+                    bgcolor: 'rgba(0,0,0,0)', borderwidth: 0,
+                    steps: [
+                      { range: [fairValue * 0.5, fairValue], color: 'rgba(54,196,111,0.25)' },   // cheaper than fair
+                      { range: [fairValue, fairValue * 1.5], color: 'rgba(240,97,109,0.22)' },    // pricier than fair
+                    ],
+                    threshold: { line: { color: '#AEE7B1', width: 4 }, thickness: 0.9, value: fairValue },
+                  },
+                }]}
+                layout={plotlyDark({ height: 300, margin: { t: 30, b: 10, l: 40, r: 40 } })}
+                useResizeHandler style={{ width: '100%', height: '100%' }} config={plotlyConfig}
+              />
+            </div>
+            <div className="mt-1 flex justify-center gap-6 text-xs text-dhanam-text-lo">
+              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-dhanam-pos" /> Cheaper than fair</span>
+              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: '#AEE7B1' }} /> Fair value</span>
+              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-dhanam-neg" /> Pricier than fair</span>
+            </div>
+          </Panel>
+
+          <Panel title="Our Estimate">
+            <div className="text-xs uppercase tracking-wider text-dhanam-text-lo">Fair Value</div>
+            <div className="tabular text-4xl font-bold text-dhanam-accent">{fmtMoney(fairValue, cur)}</div>
+            <div className="mt-4 text-xs uppercase tracking-wider text-dhanam-text-lo">Current Price</div>
+            <div className="tabular text-2xl font-semibold text-dhanam-text-hi">{fmtMoney(price, cur)}</div>
+            <div className={`mt-5 rounded-xl border px-4 py-3 text-sm ${undervalued ? 'border-emerald-700/30 bg-emerald-900/15 text-dhanam-pos' : 'border-rose-900/30 bg-rose-900/10 text-dhanam-neg'}`}>
+              {undervalued ? <TrendingUp className="mb-1 h-4 w-4" /> : <TrendingDown className="mb-1 h-4 w-4" />}
+              {verdict}
+            </div>
+            <p className="mt-3 text-[11px] text-dhanam-text-lo">Switch to <b>Pro</b> for the full DCF, WACC build-up and 10,000-path simulation.</p>
+          </Panel>
+        </div>
+      </div>
+    );
+  }
+
+  // ===================== PRO: full institutional cockpit =====================
   // ---- Monte Carlo "football field" (precomputed percentiles → honest box) ----
   const p = mc.percentiles || {};
   const hasMC = mc.status === 'ok' && p.p50 != null;

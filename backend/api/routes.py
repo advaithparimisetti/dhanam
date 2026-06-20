@@ -23,6 +23,7 @@ class AnalysisResponse(BaseModel):
     scores: Dict[str, Any]
     intrinsic_value: Optional[float] = None
     valuation: Optional[Dict[str, Any]] = None   # full DCF / Monte Carlo / CCA stack
+    playbook: Optional[Dict[str, Any]] = None    # 40-point, 8-pillar Quantitative Playbook
     fx: Optional[Dict[str, Any]] = None          # FX normalization metadata
     history: List[Dict[str, Any]] = []
 
@@ -103,6 +104,7 @@ def analyze_stock(
             sector=res["sector"],
             intrinsic_value=res.get("intrinsic_value"),
             valuation=res.get("valuation"),
+            playbook=res.get("playbook"),
             fx=res.get("fx"),
             history=res.get("history", []),
             scores={

@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import Plot from 'react-plotly.js';
-import { Activity } from 'lucide-react';
-import { EmptyState, plotlyConfig } from '../common/ui';
+import { Activity, TrendingUp, TrendingDown } from 'lucide-react';
+import { EmptyState, Panel, plotlyDark, plotlyConfig } from '../common/ui';
+import { useMode } from '../../context/ModeContext';
 
 /* ===========================================================================
    Technical indicator math (Wilder-smoothed RSI, MACD, SMA, EMA, Bollinger).
@@ -84,6 +85,7 @@ const calculateMACD = (d, fast = 12, slow = 26, signal = 9) => {
    crosshair spike spans the full height and hover is unified across indicators.
    =========================================================================== */
 const TechnicalCharts = ({ data }) => {
+  const { pro } = useMode();
   const [period, setPeriod] = useState('1y');
   const [overlays, setOverlays] = useState(['SMA 50']);
   const [showVolume, setShowVolume] = useState(true);
@@ -134,6 +136,61 @@ const TechnicalCharts = ({ data }) => {
 
   const { dates, opens, highs, lows, closes, volumes } = chart;
   const up = '#36C46F', down = '#F0616D';
+
+  // ===================== BEGINNER: clean line + trend verdict =====================
+  if (!pro) {
+    const sma50 = calculateSMA(closes, 50);
+    const sma200 = calculateSMA(closes, 200);
+    const last = closes[closes.length - 1];
+    const s50 = sma50[sma50.length - 1];
+    const s200 = sma200[sma200.length - 1];
+    const aboveLong = s200 != null && last > s200;
+    const aboveShort = s50 != null && last > s50;
+    const strongBull = s50 != null && s200 != null && last > s50 && s50 > s200;
+    const bullish = aboveLong || aboveShort;
+    const trend = strongBull ? 'Strongly Bullish' : bullish ? 'Bullish' : 'Bearish';
+    const color = bullish ? up : down;
+    const blurb = strongBull
+      ? 'The price is above both its short- and long-term averages — a healthy, established uptrend.'
+      : bullish
+      ? 'The price is trading above a key moving average — momentum is leaning positive.'
+      : 'The price is below its key moving averages — momentum is currently weak.';
+    return (
+      <div className="flex w-full flex-col gap-6 animate-in fade-in duration-500">
+        <div className="bento flex items-center gap-4 p-5">
+          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl" style={{ background: color + '22' }}>
+            {bullish ? <TrendingUp className="h-7 w-7" style={{ color }} /> : <TrendingDown className="h-7 w-7" style={{ color }} />}
+          </div>
+          <div>
+            <div className="text-xs uppercase tracking-wider text-dhanam-text-lo">Current Trend</div>
+            <div className="text-2xl font-bold" style={{ color }}>{trend}</div>
+            <p className="mt-1 text-sm text-dhanam-text-mid">{blurb}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-1">
+          {['6m', '1y', '2y', '5y'].map((p) => (
+            <button key={p} onClick={() => setPeriod(p)}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${period === p ? 'bg-dhanam-primary text-white' : 'text-dhanam-text-mid hover:text-dhanam-text-hi'}`}>
+              {p.toUpperCase()}
+            </button>
+          ))}
+        </div>
+        <Panel title={`${data.ticker} Price`} subtitle="The simple story: is it going up or down?">
+          <div className="h-[360px] w-full">
+            <Plot
+              data={[{ x: dates, y: closes, type: 'scatter', mode: 'lines', fill: 'tozeroy',
+                fillcolor: bullish ? 'rgba(54,196,111,0.10)' : 'rgba(240,97,109,0.08)', line: { color, width: 2 } }]}
+              layout={plotlyDark({ height: 360, yaxis: { tickprefix: data.currency === 'USD' ? '$' : '', gridcolor: 'rgba(255,255,255,0.05)', tickfont: { color: '#9AA7A0' } }, xaxis: { gridcolor: 'rgba(255,255,255,0.04)', tickfont: { color: '#9AA7A0' } } })}
+              useResizeHandler style={{ width: '100%', height: '100%' }} config={plotlyConfig}
+            />
+          </div>
+        </Panel>
+        <p className="text-[11px] text-dhanam-text-lo">Switch to <b>Pro</b> for candlesticks, MACD, RSI and moving-average overlays.</p>
+      </div>
+    );
+  }
+
+  // ===================== PRO: synchronized candlestick / MACD / RSI =====================
   const traces = [];
 
   // ---- Pane 1: Price (candles + overlays) on yaxis 'y' ----

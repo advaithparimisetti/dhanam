@@ -1,8 +1,27 @@
 import React, { useState } from 'react';
 import Plot from 'react-plotly.js';
-import { Users, Search, Activity, AlertTriangle, TrendingUp } from 'lucide-react';
+import { Users, Search, Activity, AlertTriangle, TrendingUp, Trophy, Crown } from 'lucide-react';
 import { comparePeers } from '../../api/client';
 import { Panel, DataTable, Badge, fmtMoney, fmtBig, fmtPct, fmtNum, fmtX, plotlyDark, plotlyConfig } from '../common/ui';
+import { useMode } from '../../context/ModeContext';
+
+// Lightweight /40 "Quick Score" from the headline peer metrics already in the
+// /compare payload — avoids a heavy full-Playbook fan-out across N tickers.
+// Missing fields default to mid-values so a peer is never unfairly zeroed.
+function quickScore(p) {
+  const n = (x) => (x == null || isNaN(x) ? null : Number(x));
+  const ev = n(p.ev_ebitda_ltm), pe = n(p.pe_ratio), roe = n(p.roe),
+    g = n(p.rev_growth), pb = n(p.pb_ratio), dy = n(p.div_yield);
+  const evS = ev == null ? 2.5 : ev <= 8 ? 5 : ev <= 12 ? 3.5 : ev <= 18 ? 2 : ev <= 25 ? 1 : 0;
+  const peS = pe == null ? 2.5 : pe <= 12 ? 5 : pe <= 18 ? 3.5 : pe <= 25 ? 2 : pe <= 40 ? 1 : 0;
+  const qS = roe == null ? 4 : roe >= 0.25 ? 10 : roe >= 0.15 ? 7 : roe >= 0.08 ? 4 : roe >= 0 ? 2 : 0;
+  const gS = g == null ? 4 : g >= 0.20 ? 10 : g >= 0.15 ? 8 : g >= 0.10 ? 6 : g >= 0.05 ? 3 : g >= 0 ? 1 : 0;
+  const pbS = pb == null ? 2.5 : pb <= 1.5 ? 5 : pb <= 3 ? 3 : pb <= 6 ? 1.5 : 0.5;
+  const dyS = dy == null ? 2.5 : dy >= 0.03 ? 5 : dy >= 0.01 ? 3 : dy > 0 ? 1.5 : 0;
+  return Math.round(Math.max(0, Math.min(40, evS + peS + qS + gS + pbS + dyS)));
+}
+
+const MEDAL = ['#F5C24B', '#C0C6CF', '#CD8A52'];   // gold / silver / bronze
 
 /* ===========================================================================
    PeerComparison — regression-scored relative-value benchmarking.
@@ -11,6 +30,7 @@ import { Panel, DataTable, Badge, fmtMoney, fmtBig, fmtPct, fmtNum, fmtX, plotly
    peer set's growth & ROE — higher = cheaper for its quality).
    =========================================================================== */
 const PeerComparison = ({ data }) => {
+  const { pro } = useMode();
   const [peerInput, setPeerInput] = useState('');
   const [peers, setPeers] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -110,8 +130,59 @@ const PeerComparison = ({ data }) => {
         </div>
       </Panel>
 
-      {/* Results */}
-      {peers && peers.length > 0 && (
+      {/* Results — Beginner Podium */}
+      {peers && peers.length > 0 && !pro && (() => {
+        const ranked = [...peers].map((p) => ({ ...p, _score: quickScore(p) })).sort((a, b) => b._score - a._score);
+        const top3 = ranked.slice(0, 3);
+        const podium = [top3[1], top3[0], top3[2]].filter(Boolean);   // visual: silver, gold, bronze
+        const rankOf = { [top3[0]?.ticker]: 0, [top3[1]?.ticker]: 1, [top3[2]?.ticker]: 2 };
+        const padH = ['h-20', 'h-28', 'h-16'];                        // pedestal heights per podium slot
+        return (
+          <>
+            <Panel title="Playbook Podium" subtitle="Peers ranked by an overall Quick Score out of 40">
+              <div className="flex items-end justify-center gap-3 py-4 sm:gap-6">
+                {podium.map((p) => {
+                  const r = rankOf[p.ticker];
+                  return (
+                    <div key={p.ticker} className="flex w-24 flex-col items-center sm:w-32">
+                      {r === 0 && <Crown className="mb-1 h-5 w-5" style={{ color: MEDAL[0] }} />}
+                      <div className={`mb-2 flex flex-col items-center rounded-xl border px-2 py-3 ${isBase(p.ticker) ? 'border-emerald-600/40 bg-emerald-900/15' : 'border-white/10 bg-white/5'}`}>
+                        <span className="font-mono text-sm font-bold text-dhanam-text-hi">{p.ticker}</span>
+                        <span className="tabular text-2xl font-bold" style={{ color: MEDAL[r] }}>{p._score}</span>
+                        <span className="text-[10px] text-dhanam-text-lo">/ 40</span>
+                      </div>
+                      <div className={`flex w-full items-start justify-center rounded-t-lg ${padH[podium.indexOf(p)]}`} style={{ background: MEDAL[r] + '33', borderTop: `2px solid ${MEDAL[r]}` }}>
+                        <span className="mt-1 text-lg font-bold" style={{ color: MEDAL[r] }}>{r + 1}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Panel>
+
+            {ranked.length > 3 && (
+              <Panel title="Full Ranking">
+                <div className="flex flex-col gap-2">
+                  {ranked.map((p, i) => (
+                    <div key={p.ticker} className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 ${isBase(p.ticker) ? 'border-emerald-600/30 bg-emerald-900/10' : 'border-white/5 bg-white/[0.02]'}`}>
+                      <span className="w-6 text-center font-mono text-sm text-dhanam-text-lo">{i + 1}</span>
+                      <span className="w-16 font-mono font-bold text-dhanam-text-hi">{p.ticker}</span>
+                      <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/5">
+                        <div className="h-full rounded-full bg-dhanam-primary" style={{ width: `${(p._score / 40) * 100}%` }} />
+                      </div>
+                      <span className="tabular w-12 text-right text-sm font-semibold text-dhanam-accent">{p._score}/40</span>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-3 text-[11px] text-dhanam-text-lo">Quick Score blends value, quality, growth and shareholder metrics. Switch to <b>Pro</b> for the full EV/EBITDA · PEG matrix.</p>
+              </Panel>
+            )}
+          </>
+        );
+      })()}
+
+      {/* Results — Pro Matrix */}
+      {peers && peers.length > 0 && pro && (
         <>
           <Panel
             title="Relative-Value Matrix"

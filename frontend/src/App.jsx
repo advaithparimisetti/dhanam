@@ -3,6 +3,7 @@ import { Search, TrendingUp, AlertTriangle, Activity, BarChart2, Shield, Layers,
 import { analyzeStock, addToWatchlist } from './api/client';
 import { sym } from './components/common/ui';
 import { useAuth } from './context/AuthContext';
+import { useMode } from './context/ModeContext';
 
 const CURRENCIES = ['USD', 'EUR', 'INR', 'GBP'];
 import AuthModal from './components/auth/AuthModal';
@@ -22,6 +23,8 @@ function App() {
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
   const [currency, setCurrency] = useState('USD');   // FX target for all monetary figures
+
+  const { pro, setPro } = useMode();   // global Beginner/Pro display mode
 
   // ---- Auth + watchlist UI state ----
   const { user, loading: authLoading, logout } = useAuth();
@@ -69,6 +72,20 @@ function App() {
             currency === c ? 'bg-dhanam-primary text-white' : 'text-dhanam-text-mid hover:text-dhanam-text-hi'
           }`}>
           {c}
+        </button>
+      ))}
+    </div>
+  );
+
+  // Beginner ⟷ Pro mode toggle — translates the advanced data for laymen.
+  const ModeToggle = () => (
+    <div className="flex items-center rounded-lg border border-white/10 bg-white/5 p-0.5" title="Switch between plain-language and institutional views">
+      {[['Beginner', false], ['Pro', true]].map(([label, val]) => (
+        <button key={label} onClick={() => setPro(val)}
+          className={`rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide transition-colors ${
+            pro === val ? 'bg-dhanam-accent text-[#0A120E]' : 'text-dhanam-text-mid hover:text-dhanam-text-hi'
+          }`}>
+          {label}
         </button>
       ))}
     </div>
@@ -137,7 +154,7 @@ function App() {
   if (status === 'idle') {
     view = (
       <div className="min-h-screen bg-[#050B08] text-white flex flex-col items-center justify-center p-4 relative overflow-hidden">
-        <div className="absolute top-4 right-4 z-20 flex items-center gap-2"><CurrencySelector /><AuthControls /></div>
+        <div className="absolute top-4 right-4 z-20 flex flex-wrap items-center justify-end gap-2"><ModeToggle /><CurrencySelector /><AuthControls /></div>
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] md:w-[800px] h-[600px] md:h-[800px] bg-green-900/10 rounded-full blur-[120px] pointer-events-none"></div>
 
         <div className="z-10 w-full max-w-2xl text-center flex flex-col items-center px-4">
@@ -204,6 +221,7 @@ function App() {
                 placeholder="Search another ticker..."
               />
             </div>
+            <ModeToggle />
             <CurrencySelector />
             <AuthControls />
           </div>
@@ -269,9 +287,9 @@ function App() {
               {/* Core Snapshot Bento Grid */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8 md:mb-10 w-full">
                 <MetricCard title="Market Cap" value={`${sym(data.currency)}${(data.market_cap / 1e9).toFixed(2)}B`} icon={<BarChart2 className="w-4 h-4 md:w-5 md:h-5 text-gray-500" />} />
-                <MetricCard title="Value Score" value={`${data.scores.undervalued_score}/40`} highlight icon={<Shield className="w-4 h-4 md:w-5 md:h-5 text-gray-500" />} />
-                <MetricCard title="Growth Score" value={`${data.scores.multibagger_score}/50`} highlight icon={<TrendingUp className="w-4 h-4 md:w-5 md:h-5 text-gray-500" />} />
-                <MetricCard title="P/E Ratio" value={data.scores.details?.pe ? data.scores.details.pe.toFixed(2) : 'N/A'} icon={<Activity className="w-4 h-4 md:w-5 md:h-5 text-gray-500" />} />
+                <MetricCard title="Playbook Score" value={`${data.playbook?.total ?? '—'}/40`} highlight icon={<Shield className="w-4 h-4 md:w-5 md:h-5 text-gray-500" />} />
+                <MetricCard title="Grade" value={data.playbook?.grade ?? '—'} highlight icon={<TrendingUp className="w-4 h-4 md:w-5 md:h-5 text-gray-500" />} />
+                <MetricCard title="P/E Ratio" value={data.scores?.details?.pe ? data.scores.details.pe.toFixed(2) : 'N/A'} icon={<Activity className="w-4 h-4 md:w-5 md:h-5 text-gray-500" />} />
               </div>
 
               {/* Tabs */}

@@ -1,196 +1,276 @@
-import React, { useRef } from 'react';
+import React, { useRef, useMemo } from 'react';
 import Plot from 'react-plotly.js';
-import { Check, X, Download } from 'lucide-react';
 import html2canvas from 'html2canvas';
+import { Download, ShieldCheck, AlertOctagon, Sparkles, Gauge } from 'lucide-react';
+import { useMode } from '../../context/ModeContext';
+import {
+  Panel, StatTile, Badge, EmptyState, DataTable,
+  fmtMoney, fmtPct, fmtBig, fmtNum, plotlyDark, plotlyConfig,
+} from '../common/ui';
+
+/* ===========================================================================
+   VisualReport — dual-mode overview driven by the 40-point Playbook.
+   Beginner: colour-graded scorecard gauge + traffic-light pillars + a plain-
+   language (NLG) verdict. Pro: exact decimal pillar breakdown + DCF targets +
+   the ROIC−WACC value-creation spread.
+   =========================================================================== */
+
+// Plain-language phrasing for the NLG verdict.
+const STRONG = {
+  intrinsic_value: 'is trading at a deep discount to its fair value',
+  balance_sheet: 'rests on a fortress balance sheet',
+  earnings_stability: 'has remarkably steady, consistent earnings',
+  growth: 'is growing fast with improving returns on capital',
+  quant_value: 'screens statistically cheap',
+  technical: 'has strong upward price momentum',
+  behavioral: 'enjoys strong institutional confidence',
+  moat: 'commands a wide competitive moat and real pricing power',
+};
+const WEAK = {
+  intrinsic_value: 'looks expensive versus its intrinsic value',
+  balance_sheet: 'carries some balance-sheet risk',
+  earnings_stability: 'has uneven, inconsistent earnings',
+  growth: 'is growing only slowly',
+  quant_value: 'screens expensive on value metrics',
+  technical: 'is in a weak price trend',
+  behavioral: 'faces elevated short interest',
+  moat: 'has a relatively thin competitive moat',
+};
+const VERDICT = {
+  A: 'an exceptional, high-conviction profile',
+  B: 'a strong, attractive profile',
+  C: 'a mixed, middle-of-the-road profile',
+  D: 'a weak profile with notable risks',
+  F: 'a poor profile that fails most quality checks',
+};
+
+const gradeColor = (g) => (g === 'A' || g === 'B' ? '#36C46F' : g === 'C' ? '#F5A623' : '#F0616D');
+const lightFor = (score, available) => {
+  if (!available) return { color: '#5F6C66', bg: 'rgba(255,255,255,0.04)', label: 'No data' };
+  const r = score / 5;
+  if (r >= 0.7) return { color: '#36C46F', bg: 'rgba(54,196,111,0.12)', label: 'Strong' };
+  if (r >= 0.4) return { color: '#F5A623', bg: 'rgba(245,166,35,0.12)', label: 'Fair' };
+  return { color: '#F0616D', bg: 'rgba(240,97,109,0.12)', label: 'Weak' };
+};
 
 const VisualReport = ({ data }) => {
+  const { pro } = useMode();
   const reportRef = useRef(null);
-  const details = data.scores.details || {};
-  
-  // Scoring
-  const uScore = data.scores.undervalued_score || 0;
-  const mScore = data.scores.multibagger_score || 0;
-  const uPct = Math.max(0, Math.min(1, uScore / 40.0));
-  const mPct = Math.max(0, Math.min(1, mScore / 50.0));
+  const cur = data.currency || 'USD';
+  const pb = data.playbook || {};
+  const pillars = pb.pillars || [];
+  const dcf = data.valuation?.dcf || {};
 
-  // Radar Components
-  const peVal = details.pe || 0;
-  const roeVal = details.roe || 0;
-  const revgVal = details.revenueGrowth || 0;
-  const dteVal = details.debtToEquity || 0;
-  const gmVal = details.grossMargins || 0;
+  const roicPct = pillars.find((p) => p.key === 'growth')?.detail?.roic_now_pct ?? null;
+  const waccPct = dcf.wacc != null ? dcf.wacc * 100 : null;
+  const spread = roicPct != null && waccPct != null ? roicPct - waccPct : null;
 
-  const valuationComp = (peVal > 0) ? Math.max(0, Math.min(1, (40 - peVal) / 40)) : 0;
-  const profitabilityComp = roeVal ? Math.max(0, Math.min(1, roeVal / 0.25)) : 0;
-  const growthComp = revgVal ? Math.max(0, Math.min(1, revgVal / 0.25)) : 0;
-  const balanceComp = dteVal ? Math.max(0, Math.min(1, 1 - (dteVal / 2.0))) : 0;
-  const moatComp = gmVal ? Math.max(0, Math.min(1, gmVal / 0.60)) : 0;
+  const narrative = useMemo(() => {
+    if (!pillars.length) return '';
+    const avail = pillars.filter((p) => p.available);
+    const strong = avail.filter((p) => p.score >= 4).sort((a, b) => b.score - a.score);
+    const weak = avail.filter((p) => p.score <= 2).sort((a, b) => a.score - b.score);
+    let s = `${data.company_name} scored ${pb.total}/40 (Grade ${pb.grade}) — ${VERDICT[pb.grade] || 'a profile with mixed signals'}. `;
+    if (strong.length) s += `Its standout strengths: it ${strong.slice(0, 2).map((p) => STRONG[p.key]).join(', and it ')}. `;
+    if (weak.length) s += `Key watch-outs: it ${weak.slice(0, 2).map((p) => WEAK[p.key]).join(', and it ')}.`;
+    else if (strong.length) s += 'We found no major red flags in the available data.';
+    return s;
+  }, [pillars, pb.total, pb.grade, data.company_name]);
 
-  // Checklist
-  const checklist = [
-    { label: "Price below Intrinsic DCF Value", passed: data.intrinsic_value && data.price < data.intrinsic_value },
-    { label: "Debt/Equity < 0.5", passed: dteVal !== null && dteVal < 0.5 },
-    { label: "ROE > 15%", passed: roeVal !== null && roeVal > 0.15 },
-    { label: "Revenue growth > 5%", passed: revgVal !== null && revgVal > 0.05 },
-    { label: "Small-cap < $2B", passed: data.market_cap !== null && data.market_cap < 2e9 },
-    { label: "EPS qtr accel > 20%", passed: details.eps_growth !== null && details.eps_growth > 0.2 },
-  ];
-
-  // Chart Data Extraction
-  const dates = data.history ? data.history.map(item => item.date) : [];
-  const prices = data.history ? data.history.map(item => item.close) : [];
-
-  const formatPct = (val) => val != null ? `${(val * 100).toFixed(1)}%` : 'n/a';
-  const formatPrice = (val) => val != null ? `${data.currency === 'USD' ? '$' : data.currency + ' '}${val.toLocaleString(undefined, {minimumFractionDigits: 2})}` : 'n/a';
-  const formatMcap = (val) => val != null ? `${data.currency === 'USD' ? '$' : ''}${(val / 1e9).toFixed(2)}B` : 'n/a';
-
-  // --- Live valuation-engine summary (DCF + Monte Carlo) for the overview band ---
-  const valuation = data.valuation || {};
-  const dcf = valuation.dcf || {};
-  const mc = valuation.monte_carlo || {};
-  const mcP = mc.percentiles || {};
-  const fairValue = dcf.intrinsic_value_per_share ?? data.intrinsic_value;
-  const upsidePct = dcf.upside_pct != null
-    ? dcf.upside_pct
-    : (fairValue && data.price ? ((fairValue - data.price) / data.price) * 100 : null);
-  const isUnder = upsidePct != null && upsidePct > 0;
-
-  const handleDownload = async () => {
+  const download = async () => {
     if (!reportRef.current) return;
     const canvas = await html2canvas(reportRef.current, { backgroundColor: '#0A120E', scale: 2 });
     const link = document.createElement('a');
-    link.download = `${data.ticker}_playbook_report.png`;
-    link.href = canvas.toDataURL("image/png", 1.0);
+    link.download = `${data.ticker}_playbook_scorecard.png`;
+    link.href = canvas.toDataURL('image/png', 1.0);
     link.click();
   };
 
+  if (!pillars.length) {
+    return (
+      <EmptyState
+        icon={<AlertOctagon className="h-12 w-12 text-dhanam-text-lo" />}
+        title="Playbook Score Unavailable"
+        message={`The 40-point Playbook needs fundamental data we couldn't retrieve for ${data.ticker}. Try again shortly.`}
+      />
+    );
+  }
+
+  // Shared price-history line (both modes).
+  const dates = (data.history || []).map((h) => h.date);
+  const closes = (data.history || []).map((h) => h.close);
+
   return (
-    <div className="w-full flex flex-col items-end gap-4 animate-in fade-in duration-500">
-      <button onClick={handleDownload} className="flex items-center gap-2 bg-[#2D7A3E] hover:bg-[#1B4D2B] text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-lg">
-        <Download className="w-4 h-4" /> Download Report
+    <div className="flex w-full flex-col items-end gap-4 animate-in fade-in duration-500">
+      <button onClick={download}
+        className="flex items-center gap-2 rounded-lg bg-dhanam-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#1B4D2B]">
+        <Download className="h-4 w-4" /> Download Scorecard
       </button>
 
-      <div ref={reportRef} className="w-full bg-[#0A120E] border border-white/10 rounded-2xl p-6 md:p-10 shadow-2xl relative">
-        {/* Decorative glow — excluded from html2canvas capture (it rasterizes
-            heavy blur() as a hard circle, producing the watermark artifact). */}
-        <div data-html2canvas-ignore="true" className="absolute top-0 right-0 w-[500px] h-[500px] bg-[#2D7A3E]/5 rounded-full blur-[100px] pointer-events-none"></div>
+      <div ref={reportRef} className="w-full bg-dhanam-panel border border-white/10 rounded-2xl p-6 md:p-8 relative">
+        <div data-html2canvas-ignore="true" className="absolute top-0 right-0 w-[400px] h-[400px] bg-[#2D7A3E]/5 rounded-full blur-[100px] pointer-events-none" />
 
-        {/* 1. Header Section */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 border-b border-white/10 pb-6 mb-8">
+        {/* Header */}
+        <div className="relative z-10 mb-6 flex flex-col gap-3 border-b border-white/10 pb-5 md:flex-row md:items-center md:justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-white tracking-tight">{data.company_name}</h1>
-            <div className="text-gray-400 text-sm mt-1">
-              <span className="font-mono bg-white/10 px-2 py-0.5 rounded text-white mr-2">{data.ticker}</span>
-              Sector: {data.sector}
+            <div className="mb-1 flex items-center gap-2">
+              <span className="rounded bg-white/10 px-2 py-0.5 font-mono text-xs tracking-widest text-white">{data.ticker}</span>
+              <span className="text-xs text-dhanam-text-lo">{data.sector}</span>
             </div>
-            <div className="text-gray-500 text-xs mt-3">
-              Price: <span className="text-gray-300 font-medium">{formatPrice(data.price)}</span> &nbsp;|&nbsp; 
-              Market Cap: <span className="text-gray-300 font-medium">{formatMcap(data.market_cap)}</span>
-            </div>
+            <h2 className="font-serif text-2xl font-semibold tracking-tight text-dhanam-text-hi">{data.company_name}</h2>
           </div>
-          <div className="bg-white/5 border border-white/10 rounded-xl p-4 min-w-[200px]">
-            <div className="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-2 text-center">Core Snapshot</div>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-              <div className="text-gray-400">P/E:</div><div className="text-white font-medium text-right">{peVal ? peVal.toFixed(2) : 'n/a'}</div>
-              <div className="text-gray-400">P/B:</div><div className="text-white font-medium text-right">{details.pb ? details.pb.toFixed(2) : 'n/a'}</div>
-              <div className="text-gray-400">ROE:</div><div className="text-white font-medium text-right">{formatPct(roeVal)}</div>
-              <div className="text-gray-400">Rev Gr:</div><div className="text-white font-medium text-right">{formatPct(revgVal)}</div>
-            </div>
+          <div className="flex items-center gap-3">
+            <Badge tone={pb.grade === 'A' || pb.grade === 'B' ? 'pos' : pb.grade === 'C' ? 'warn' : 'neg'}>Grade {pb.grade}</Badge>
+            <Badge tone="neutral">{pb.pillars_available}/8 pillars graded</Badge>
+            <Badge tone="neutral">{pro ? 'Pro view' : 'Beginner view'}</Badge>
           </div>
         </div>
 
-        {/* 1b. Live Valuation Engine Band (3-stage DCF + 10k Monte Carlo) */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-10 w-full">
-          <div className="bg-black/20 border border-white/5 rounded-xl p-4">
-            <div className="text-[11px] text-gray-500 uppercase tracking-wider mb-1">DCF Fair Value</div>
-            <div className="text-xl md:text-2xl font-bold text-[#AEE7B1] font-mono tabular">{formatPrice(fairValue)}</div>
-            <div className="text-[11px] text-gray-600 mt-1">{dcf.status === 'ok' ? '3-stage unlevered DCF' : 'Graham proxy'}</div>
-          </div>
-          <div className="bg-black/20 border border-white/5 rounded-xl p-4">
-            <div className="text-[11px] text-gray-500 uppercase tracking-wider mb-1">Upside / Downside</div>
-            <div className={`text-xl md:text-2xl font-bold font-mono tabular ${upsidePct == null ? 'text-gray-400' : isUnder ? 'text-[#36C46F]' : 'text-[#F0616D]'}`}>
-              {upsidePct == null ? 'n/a' : `${upsidePct > 0 ? '+' : ''}${upsidePct.toFixed(1)}%`}
+        {/* ---------------- BEGINNER ---------------- */}
+        {!pro && (
+          <div className="relative z-10 grid grid-cols-1 gap-6 lg:grid-cols-3">
+            {/* Gauge */}
+            <div className="bento flex flex-col items-center p-4">
+              <div className="h-[240px] w-full">
+                <Plot
+                  data={[{
+                    type: 'indicator', mode: 'gauge+number', value: pb.total,
+                    number: { font: { size: 44, color: '#E6F0EA', family: 'Roboto Mono' }, suffix: ' /40' },
+                    gauge: {
+                      axis: { range: [0, 40], tickvals: [0, 13, 20, 27, 34, 40], tickcolor: '#5F6C66', tickfont: { size: 10 } },
+                      bar: { color: gradeColor(pb.grade), thickness: 0.28 },
+                      bgcolor: 'rgba(0,0,0,0)', borderwidth: 0,
+                      steps: [
+                        { range: [0, 13], color: 'rgba(240,97,109,0.22)' },
+                        { range: [13, 27], color: 'rgba(245,166,35,0.20)' },
+                        { range: [27, 40], color: 'rgba(54,196,111,0.20)' },
+                      ],
+                    },
+                  }]}
+                  layout={plotlyDark({ height: 240, margin: { t: 24, b: 8, l: 28, r: 28 } })}
+                  useResizeHandler style={{ width: '100%', height: '100%' }} config={plotlyConfig}
+                />
+              </div>
+              <p className="-mt-2 text-xs text-dhanam-text-lo">Overall Playbook Score</p>
             </div>
-            <div className="text-[11px] text-gray-600 mt-1">vs. current price</div>
-          </div>
-          <div className="bg-black/20 border border-white/5 rounded-xl p-4">
-            <div className="text-[11px] text-gray-500 uppercase tracking-wider mb-1">WACC (CAPM)</div>
-            <div className="text-xl md:text-2xl font-bold text-white font-mono tabular">{dcf.wacc != null ? `${(dcf.wacc * 100).toFixed(2)}%` : 'n/a'}</div>
-            <div className="text-[11px] text-gray-600 mt-1">{dcf.wacc_detail?.beta_used != null ? `β ${dcf.wacc_detail.beta_used.toFixed(2)}` : 'discount rate'}</div>
-          </div>
-          <div className="bg-black/20 border border-white/5 rounded-xl p-4">
-            <div className="text-[11px] text-gray-500 uppercase tracking-wider mb-1">Monte Carlo 90% CI</div>
-            <div className="text-base md:text-lg font-bold text-white font-mono tabular leading-tight">
-              {mcP.p5 != null ? `${formatPrice(mcP.p5)} – ${formatPrice(mcP.p95)}` : 'n/a'}
+
+            {/* NLG verdict */}
+            <Panel className="lg:col-span-2" title="What this means" subtitle="Plain-language summary"
+              right={<Sparkles className="h-4 w-4 text-dhanam-accent" />}>
+              <p className="text-[15px] leading-relaxed text-dhanam-text-mid">{narrative}</p>
+            </Panel>
+
+            {/* Traffic-light pillars */}
+            <div className="lg:col-span-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {pillars.map((p) => {
+                  const l = lightFor(p.score, p.available);
+                  return (
+                    <div key={p.key} className="bento p-4" style={{ background: l.bg }}>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium text-dhanam-text-hi">{p.name}</span>
+                        <span className="h-2.5 w-2.5 rounded-full" style={{ background: l.color }} />
+                      </div>
+                      <div className="mt-2 text-xs font-semibold" style={{ color: l.color }}>{l.label}</div>
+                      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/5">
+                        <div className="h-full rounded-full" style={{ width: `${(p.score / 5) * 100}%`, background: l.color }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-            <div className="text-[11px] text-gray-600 mt-1">{mc.prob_above_price != null ? `${(mc.prob_above_price * 100).toFixed(0)}% prob. upside` : `${(mc.iterations || 0).toLocaleString()} paths`}</div>
-          </div>
-        </div>
 
-        {/* 2. Middle Row: Gauges, Radar, Checklist */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-10 w-full">
-          <div className="flex flex-col justify-center space-y-8 bg-black/20 rounded-xl p-6 border border-white/5">
-            <div>
-              <div className="flex justify-between text-sm mb-2"><span className="text-gray-400 font-medium">Value Score</span><span className="text-white font-bold">{uScore}/40</span></div>
-              <div className="w-full bg-white/5 h-6 rounded-md overflow-hidden relative border border-white/10"><div className="h-full bg-gradient-to-r from-red-500 via-yellow-500 to-green-500" style={{ width: `${uPct * 100}%` }}/></div>
+            {/* Price line */}
+            <Panel className="lg:col-span-3" title="Price History" subtitle={`5-year trend (${cur})`}>
+              <div className="h-[260px] w-full">
+                <Plot
+                  data={[{ x: dates, y: closes, type: 'scatter', mode: 'lines', fill: 'tozeroy',
+                    fillcolor: 'rgba(45,122,62,0.10)', line: { color: '#AEE7B1', width: 2 } }]}
+                  layout={plotlyDark({ height: 260, yaxis: { tickprefix: cur === 'USD' ? '$' : '', gridcolor: 'rgba(255,255,255,0.05)', tickfont: { color: '#9AA7A0' } }, xaxis: { gridcolor: 'rgba(255,255,255,0.04)', tickfont: { color: '#9AA7A0' } } })}
+                  useResizeHandler style={{ width: '100%', height: '100%' }} config={plotlyConfig}
+                />
+              </div>
+            </Panel>
+          </div>
+        )}
+
+        {/* ---------------- PRO ---------------- */}
+        {pro && (
+          <div className="relative z-10 flex flex-col gap-6">
+            {/* DCF + value-creation tiles */}
+            <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+              <StatTile label="DCF Fair Value" tone="accent" icon={<Gauge className="h-4 w-4" />}
+                value={fmtMoney(dcf.intrinsic_value_per_share ?? data.intrinsic_value, cur)} sub="Per share (base case)" />
+              <StatTile label="Upside" tone={(dcf.upside_pct ?? 0) >= 0 ? 'pos' : 'neg'}
+                value={dcf.upside_pct != null ? `${dcf.upside_pct > 0 ? '+' : ''}${fmtNum(dcf.upside_pct, 1)}%` : '—'} sub="vs. current price" />
+              <StatTile label="WACC" value={waccPct != null ? `${fmtNum(waccPct, 2)}%` : '—'} sub="Discount rate" />
+              <StatTile label="ROIC" value={roicPct != null ? `${fmtNum(roicPct, 1)}%` : '—'} sub="Return on invested capital" />
+              <StatTile label="ROIC − WACC Spread" tone={spread == null ? 'neutral' : spread >= 0 ? 'pos' : 'neg'}
+                value={spread != null ? `${spread > 0 ? '+' : ''}${fmtNum(spread, 1)} pts` : '—'} sub="Value creation" hint="Positive = the company earns more on capital than it costs — genuine value creation." />
             </div>
-            <div>
-              <div className="flex justify-between text-sm mb-2"><span className="text-gray-400 font-medium">Growth Score</span><span className="text-white font-bold">{mScore}/50</span></div>
-              <div className="w-full bg-white/5 h-6 rounded-md overflow-hidden relative border border-white/10"><div className="h-full bg-gradient-to-r from-red-500 via-yellow-500 to-green-500" style={{ width: `${mPct * 100}%` }}/></div>
-            </div>
+
+            {/* Exact pillar breakdown */}
+            <Panel title="Playbook Breakdown" subtitle="Exact pillar scores & the metric driving each">
+              <DataTable
+                columns={[
+                  { key: 'name', label: 'Pillar', align: 'left', mono: false, sortable: false,
+                    render: (r) => (<div><div className="text-dhanam-text-hi">{r.name}</div><div className="text-[11px] text-dhanam-text-lo">{r.school}</div></div>) },
+                  { key: 'score', label: 'Score', align: 'right', sortable: false,
+                    render: (r) => (<span className={r.available ? (r.score >= 3.5 ? 'val-pos' : r.score >= 2 ? 'text-dhanam-warn' : 'val-neg') : 'text-dhanam-text-lo'}>{r.available ? `${fmtNum(r.score, 1)}/5` : '—'}</span>) },
+                  { key: 'metric', label: 'Key Metric', align: 'right', sortable: false,
+                    render: (r) => <span className="text-dhanam-text-mid">{keyMetric(r)}</span> },
+                  { key: 'threshold', label: 'Target', align: 'left', mono: false, sortable: false,
+                    render: (r) => <span className="text-[11px] text-dhanam-text-lo">{r.detail?.threshold || '—'}</span> },
+                ]}
+                rows={pillars}
+                maxHeight="380px"
+              />
+              <div className="mt-3 flex items-center justify-between text-sm">
+                <span className="text-dhanam-text-mid">Total</span>
+                <span className="tabular font-bold text-dhanam-accent">{fmtNum(pb.total_precise, 1)} / 40 &nbsp;·&nbsp; Grade {pb.grade}</span>
+              </div>
+            </Panel>
+
+            {/* DCF assumptions */}
+            <Panel title="DCF Assumptions (raw)" subtitle="3-stage unlevered model inputs">
+              <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm md:grid-cols-3">
+                {[
+                  ['Stage-1 Growth', fmtPct(dcf.stage1_growth)],
+                  ['Terminal Growth', fmtPct(dcf.terminal_growth)],
+                  ['UFCF Margin', fmtPct(dcf.ufcf_margin)],
+                  ['Base UFCF', fmtBig(dcf.base_ufcf, cur)],
+                  ['Net Debt', fmtBig(dcf.net_debt, cur)],
+                  ['Beta (used)', fmtNum(dcf.wacc_detail?.beta_used, 2)],
+                ].map(([k, v]) => (
+                  <div key={k} className="flex items-center justify-between border-b border-white/5 py-1.5">
+                    <span className="text-dhanam-text-lo">{k}</span>
+                    <span className="tabular text-dhanam-text-hi">{v}</span>
+                  </div>
+                ))}
+              </div>
+            </Panel>
           </div>
-
-          <div className="bg-black/20 rounded-xl p-4 border border-white/5 flex items-center justify-center min-h-[350px]">
-            <Plot
-              data={[{ type: 'scatterpolar', r: [valuationComp, profitabilityComp, growthComp, balanceComp, moatComp, valuationComp], theta: ['Valuation', 'Profitability', 'Growth', 'Balance', 'Moat', 'Valuation'], fill: 'toself', fillcolor: 'rgba(45, 122, 62, 0.4)', line: { color: '#AEE7B1', width: 2 }, hoverinfo: 'none' }]}
-              layout={{ autosize: true, paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', margin: { t: 30, b: 30, l: 40, r: 40 }, polar: { radialaxis: { visible: true, range: [0, 1], showticklabels: false, gridcolor: 'rgba(255,255,255,0.1)' }, angularaxis: { tickfont: { color: '#E6F0EA', size: 12, family: 'Inter' }, gridcolor: 'rgba(255,255,255,0.1)' }, bgcolor: 'rgba(0,0,0,0)' }, showlegend: false }}
-              useResizeHandler={true}
-              style={{ width: '100%', height: '100%' }}
-            />
-          </div>
-
-          <div className="bg-black/20 rounded-xl p-6 border border-white/5 flex flex-col justify-center">
-            <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-widest mb-4">Institutional Checklist</h3>
-            <div className="space-y-3">
-              {checklist.map((item, idx) => (
-                <div key={idx} className="flex items-center gap-3">
-                  <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${item.passed ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>{item.passed ? <Check className="w-4 h-4" /> : <X className="w-4 h-4" />}</div>
-                  <span className="text-sm text-gray-300">{item.label}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* 3. Bottom Row: Interactive Price History Chart */}
-        <div className="w-full bg-black/20 border border-white/5 rounded-xl p-4 md:p-6 min-h-[300px]">
-          <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-widest mb-4">Price History (5Y) — {data.ticker}</h3>
-          {dates.length > 0 ? (
-            <Plot
-              data={[
-                { x: dates, y: prices, type: 'scatter', mode: 'lines', fill: 'tozeroy', fillcolor: 'rgba(45, 122, 62, 0.1)', line: { color: '#AEE7B1', width: 2 }, name: 'Price' }
-              ]}
-              layout={{
-                autosize: true,
-                height: 250,
-                margin: { t: 10, b: 40, l: 50, r: 10 },
-                paper_bgcolor: 'rgba(0,0,0,0)',
-                plot_bgcolor: 'rgba(0,0,0,0)',
-                xaxis: { showgrid: false, tickfont: { color: '#888' }, linecolor: 'rgba(255,255,255,0.1)' },
-                yaxis: { showgrid: true, gridcolor: 'rgba(255,255,255,0.05)', tickfont: { color: '#888' }, tickprefix: data.currency === 'USD' ? '$' : '' }
-              }}
-              useResizeHandler={true}
-              style={{ width: '100%', height: '100%' }}
-              config={{ displayModeBar: false }}
-            />
-          ) : (
-            <div className="w-full h-[250px] flex items-center justify-center text-gray-500 text-sm">Historical data currently unavailable for this ticker.</div>
-          )}
-        </div>
-
+        )}
       </div>
     </div>
   );
 };
+
+// One representative metric per pillar for the Pro table.
+function keyMetric(p) {
+  const d = p.detail || {};
+  switch (p.key) {
+    case 'intrinsic_value': return d.margin_of_safety_pct != null ? `MoS ${fmtNum(d.margin_of_safety_pct, 0)}%` : '—';
+    case 'balance_sheet': return d.net_debt_to_ebitda != null ? `ND/EBITDA ${fmtNum(d.net_debt_to_ebitda, 1)}x` : (d.current_ratio != null ? `CR ${fmtNum(d.current_ratio, 1)}` : '—');
+    case 'earnings_stability': return d.quality_years != null ? `${d.quality_years}/${d.years_checked} yrs` : '—';
+    case 'growth': return d.best_growth_pct != null ? `g ${fmtNum(d.best_growth_pct, 0)}%` : (d.roic_now_pct != null ? `ROIC ${fmtNum(d.roic_now_pct, 0)}%` : '—');
+    case 'quant_value': return d.fcf_yield_pct != null ? `FCF yld ${fmtNum(d.fcf_yield_pct, 1)}%` : '—';
+    case 'technical': return d.price_vs_sma200_pct != null ? `${d.price_vs_sma200_pct > 0 ? '+' : ''}${fmtNum(d.price_vs_sma200_pct, 0)}% vs SMA200` : '—';
+    case 'behavioral': return d.short_pct_float != null ? `Short ${fmtNum(d.short_pct_float, 1)}%` : '—';
+    case 'moat': return d.gross_margin_pct != null ? `GM ${fmtNum(d.gross_margin_pct, 0)}%` : '—';
+    default: return '—';
+  }
+}
 
 export default VisualReport;

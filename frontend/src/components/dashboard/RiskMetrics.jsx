@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import Plot from 'react-plotly.js';
-import { Activity, ShieldAlert, TrendingDown, AlertTriangle, Gauge, Waves, Info, Crosshair } from 'lucide-react';
+import { Activity, ShieldAlert, TrendingDown, AlertTriangle, Gauge, Waves, Info, Crosshair, Sun, CloudSun, CloudLightning, ShieldCheck } from 'lucide-react';
 import { getRiskProfile } from '../../api/client';
 import { StatTile, Panel, SkeletonGrid, Skeleton, fmtNum, fmtPct, plotlyDark, plotlyConfig } from '../common/ui';
+import { useMode } from '../../context/ModeContext';
 
 /* ===========================================================================
    RiskMetrics — advanced risk analytics surface.
@@ -11,6 +12,7 @@ import { StatTile, Panel, SkeletonGrid, Skeleton, fmtNum, fmtPct, plotlyDark, pl
    Charts are computed in-browser from the OHLC history for instant feedback.
    =========================================================================== */
 const RiskMetrics = ({ data }) => {
+  const { pro } = useMode();
   const [risk, setRisk] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -74,6 +76,61 @@ const RiskMetrics = ({ data }) => {
   const betaTone = beta == null ? 'neutral' : beta > 1.2 ? 'neg' : beta < 0.8 ? 'pos' : 'neutral';
   const ratioTone = (x, good = 1) => (x == null ? 'neutral' : x >= good ? 'pos' : x < 0 ? 'neg' : 'warn');
 
+  // ===================== BEGINNER: "Safety Weather Forecast" =====================
+  if (!pro) {
+    const vol = risk?.annualized_volatility;                 // decimal
+    const betaDelta = beta != null ? Math.round((beta - 1) * 100) : null;
+    const rScore =
+      (beta != null ? (beta > 1.3 ? 2 : beta > 0.9 ? 1 : 0) : 1) +
+      (vol != null ? (vol > 0.4 ? 2 : vol > 0.25 ? 1 : 0) : 1) +
+      (maxDd != null ? (maxDd < -40 ? 2 : maxDd < -25 ? 1 : 0) : 0);
+    const weather = rScore <= 1
+      ? { Icon: Sun, label: 'Calm & Sunny', color: '#36C46F', desc: 'Low risk — this stock has stayed relatively steady.' }
+      : rScore <= 3
+      ? { Icon: CloudSun, label: 'Partly Cloudy', color: '#F5A623', desc: 'Moderate risk — expect some ups and downs along the way.' }
+      : { Icon: CloudLightning, label: 'Stormy', color: '#F0616D', desc: 'High risk — this stock can swing sharply in both directions.' };
+    const crash = beta == null
+      ? 'Not enough data to gauge crash sensitivity.'
+      : beta >= 1
+      ? `In a market crash, ${data.ticker} usually drops about ${betaDelta}% more than the overall market.`
+      : `In a market crash, ${data.ticker} usually drops about ${Math.abs(betaDelta)}% less than the market — relatively defensive.`;
+    const volLabel = vol == null ? '—' : vol > 0.4 ? 'High' : vol > 0.25 ? 'Medium' : 'Low';
+    const reward = sharpe == null ? '—' : sharpe > 1 ? 'Excellent' : sharpe > 0 ? 'Decent' : 'Poor';
+    const Icon = weather.Icon;
+    const cards = [
+      { t: 'Crash Sensitivity', v: crash, icon: <TrendingDown className="h-4 w-4" /> },
+      { t: 'Worst Drop (1Y)', v: maxDd != null ? `Its biggest fall this year was about ${Math.abs(maxDd).toFixed(0)}%.` : 'Not enough data.', icon: <Activity className="h-4 w-4" /> },
+      { t: 'Bumpiness', v: `${volLabel} day-to-day price swings.`, icon: <Waves className="h-4 w-4" /> },
+      { t: 'Reward for the Risk', v: reward === '—' ? 'Not enough data.' : `${reward} — ${reward === 'Excellent' ? 'strong' : reward === 'Decent' ? 'fair' : 'weak'} returns for the risk taken.`, icon: <ShieldCheck className="h-4 w-4" /> },
+    ];
+    return (
+      <div className="flex w-full flex-col gap-6 animate-in fade-in duration-500">
+        {error && <div className="rounded-xl border border-rose-900/30 bg-rose-900/10 p-3 text-sm text-dhanam-neg">{error}</div>}
+        <Panel title="Safety Weather Forecast" subtitle="How risky has this stock been?">
+          <div className="flex flex-col items-center gap-4 py-2 text-center sm:flex-row sm:text-left">
+            <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-2xl" style={{ background: weather.color + '22' }}>
+              <Icon className="h-12 w-12" style={{ color: weather.color }} />
+            </div>
+            <div>
+              <div className="text-2xl font-bold" style={{ color: weather.color }}>{weather.label}</div>
+              <p className="mt-1 text-sm text-dhanam-text-mid">{weather.desc}</p>
+            </div>
+          </div>
+        </Panel>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {cards.map((c) => (
+            <div key={c.t} className="bento p-5">
+              <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-dhanam-text-hi">{c.icon}{c.t}</div>
+              <p className="text-sm leading-relaxed text-dhanam-text-mid">{c.v}</p>
+            </div>
+          ))}
+        </div>
+        <p className="text-[11px] text-dhanam-text-lo">Switch to <b>Pro</b> for Beta, Sortino, Treynor, VaR and Conditional VaR (CVaR).</p>
+      </div>
+    );
+  }
+
+  // ===================== PRO: advanced risk analytics =====================
   return (
     <div className="flex w-full flex-col gap-6 animate-in fade-in duration-500">
       {error && (

@@ -2,8 +2,39 @@ import React, { useEffect, useState } from 'react';
 import Plot from 'react-plotly.js';
 import { Building2, FileSpreadsheet, Target, Newspaper, ExternalLink } from 'lucide-react';
 import { getFundamentals } from '../../api/client';
+import { useMode } from '../../context/ModeContext';
+
+// Derive a Beginner "Financial Health" traffic-light set from the Playbook +
+// DCF data already on the analyze payload (no raw-statement parsing needed).
+function healthLights(data) {
+  const find = (k) => (data.playbook?.pillars || []).find((p) => p.key === k) || {};
+  const bs = find('balance_sheet').detail || {};
+  const es = find('earnings_stability');
+  const qv = find('quant_value').detail || {};
+  const netDebt = data.valuation?.dcf?.net_debt;
+  const L = (ok, warn) => (ok ? { c: '#36C46F', t: 'Healthy' } : warn ? { c: '#F5A623', t: 'Caution' } : { c: '#F0616D', t: 'Risk' });
+
+  const lights = [];
+  if (netDebt != null)
+    lights.push({ title: 'Cash vs Debt', ...L(netDebt < 0, (bs.net_debt_to_ebitda ?? 9) < 3),
+      desc: netDebt < 0 ? 'The company holds more cash than debt — a strong position.' : 'The company carries net debt; manageable if earnings are steady.' });
+  if (bs.net_debt_to_ebitda != null)
+    lights.push({ title: 'Debt Load', ...L(bs.net_debt_to_ebitda < 3, bs.net_debt_to_ebitda < 5),
+      desc: `Debt is about ${bs.net_debt_to_ebitda.toFixed(1)}× yearly earnings (under 3× is comfortable).` });
+  if (bs.current_ratio != null)
+    lights.push({ title: 'Liquidity', ...L(bs.current_ratio >= 1.5, bs.current_ratio >= 1),
+      desc: `It has ${bs.current_ratio.toFixed(1)}× the short-term cash it needs for short-term bills.` });
+  if (es.available)
+    lights.push({ title: 'Profitability', ...L(es.score >= 4, es.score >= 2),
+      desc: `Earnings have been ${es.score >= 4 ? 'consistently positive' : es.score >= 2 ? 'mostly positive' : 'unstable'} over recent years.` });
+  if (qv.fcf_yield_pct != null)
+    lights.push({ title: 'Cash Generation', ...L(qv.fcf_yield_pct >= 3, qv.fcf_yield_pct > 0),
+      desc: `It generates ${qv.fcf_yield_pct >= 3 ? 'healthy' : qv.fcf_yield_pct > 0 ? 'some' : 'little'} free cash relative to its size.` });
+  return lights;
+}
 
 const FundamentalAnalysis = ({ data }) => {
+  const { pro } = useMode();
   const [funData, setFunData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -135,8 +166,36 @@ const FundamentalAnalysis = ({ data }) => {
         </div>
       )}
 
-      {/* 2. Financial Statements Tab */}
-      {activeSubTab === 'financials' && (
+      {/* 2a. Financials — BEGINNER: Financial Health traffic lights (raw sheets hidden) */}
+      {activeSubTab === 'financials' && !pro && (
+        <div className="bg-[#0A120E] border border-white/5 rounded-2xl p-6 shadow-xl w-full">
+          <h3 className="text-lg font-semibold text-white mb-1">Financial Health</h3>
+          <p className="text-sm text-gray-500 mb-6">A simple cash-vs-debt and profitability check — green is good, red is a worry.</p>
+          {(() => {
+            const lights = healthLights(data);
+            if (!lights.length) return <div className="text-gray-500 py-8 text-center">Not enough data for a health check.</div>;
+            return (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {lights.map((l) => (
+                  <div key={l.title} className="rounded-xl border border-white/5 bg-white/[0.02] p-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-semibold text-white">{l.title}</span>
+                      <span className="flex items-center gap-2 text-xs font-medium" style={{ color: l.c }}>
+                        <span className="h-2.5 w-2.5 rounded-full" style={{ background: l.c }} /> {l.t}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-sm text-gray-400 leading-relaxed">{l.desc}</p>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+          <p className="mt-4 text-[11px] text-gray-600">Switch to <b>Pro</b> to see the full income statement, balance sheet and cash-flow statements.</p>
+        </div>
+      )}
+
+      {/* 2b. Financial Statements — PRO: raw 10-K sheets */}
+      {activeSubTab === 'financials' && pro && (
         <div className="bg-[#0A120E] border border-white/5 rounded-2xl p-6 shadow-xl w-full">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
             <h3 className="text-lg font-semibold text-white">Annual Statements</h3>
