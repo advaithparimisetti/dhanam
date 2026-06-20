@@ -1,11 +1,12 @@
 import concurrent.futures
 import yfinance as yf
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, Request
 from pydantic import BaseModel
 from typing import Dict, Any, Optional, List
-from services.valuation import run_playbook
+from services.valuation import run_playbook, normalize_peer_currency
 from services.risk import get_risk_profile
 from core.security import get_current_user
+from core.rate_limit import limiter
 from services.firebase_client import FirebaseUnavailable
 from services import watchlist as wl_repo
 
@@ -22,6 +23,7 @@ class AnalysisResponse(BaseModel):
     scores: Dict[str, Any]
     intrinsic_value: Optional[float] = None
     valuation: Optional[Dict[str, Any]] = None   # full DCF / Monte Carlo / CCA stack
+    fx: Optional[Dict[str, Any]] = None          # FX normalization metadata
     history: List[Dict[str, Any]] = []
 
 # ===========================================================================
@@ -77,19 +79,21 @@ def delete_watchlist(ticker: str, user: dict = Depends(get_current_user)):
     return _firestore_guard(wl_repo.remove_from_watchlist, user["uid"], ticker)
 
 @router.get("/analyze/{ticker}", response_model=AnalysisResponse)
+@limiter.limit("20/minute")          # per-IP DDoS/spam guard on the heaviest endpoint
 def analyze_stock(
-    ticker: str, 
-    country_code: str = "US", 
+    request: Request,                # required by slowapi to read the client IP
+    ticker: str,
+    country_code: str = "US",
     api_key: Optional[str] = None,
-    # user_id: str = Depends(validate_token) # Uncomment to protect route in production
+    target_currency: str = "USD",    # normalize all monetary outputs to this ISO currency
 ):
     """
-    Executes the fundamental playbook, runs DCF, fetches OHLC history, 
-    and returns a clean JSON payload for the frontend dashboard.
+    Executes the fundamental playbook, runs DCF, fetches OHLC history, normalizes
+    every monetary figure to `target_currency`, and returns a clean JSON payload.
     """
     try:
-        res = run_playbook(ticker, country_code, api_key)
-        
+        res = run_playbook(ticker, country_code, api_key, target_currency)
+
         return AnalysisResponse(
             ticker=res["ticker_used"],
             company_name=res["company"],
@@ -99,6 +103,7 @@ def analyze_stock(
             sector=res["sector"],
             intrinsic_value=res.get("intrinsic_value"),
             valuation=res.get("valuation"),
+            fx=res.get("fx"),
             history=res.get("history", []),
             scores={
                 "undervalued_score": res["undervalued_score"],
@@ -184,9 +189,12 @@ def get_fundamentals(ticker: str):
 
 
 @router.get("/compare")
+@limiter.limit("10/minute")          # comparison fans out to N tickers — throttle harder
 def compare_peers(
+    request: Request,                # required by slowapi to read the client IP
     base_ticker: str,
     peers: str, # Comma-separated string
+    target_currency: str = "USD",    # normalize the whole matrix to one currency
 ):
     """
     Fetches comparative fundamental data for a base ticker and a list of peers.
@@ -237,6 +245,10 @@ def compare_peers(
 
         if not comparison_data:
             raise ValueError("No valid data found for the provided tickers.")
+
+        # FX-normalize every row to the target currency so the matrix compares
+        # apples-to-apples (price / market cap / EV); multiples are ratios, untouched.
+        comparison_data = [normalize_peer_currency(p, target_currency) for p in comparison_data]
 
         # Regression-based peer scoring: regress EV/EBITDA on growth & ROE across
         # the set; names below their quality-implied multiple score as "cheap".

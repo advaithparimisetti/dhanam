@@ -21,17 +21,17 @@ apiClient.interceptors.request.use(async (config) => {
 });
 
 // ---- Public research endpoints ----
-export const analyzeStock = async (ticker, region = 'US', apiKey = '') => {
+export const analyzeStock = async (ticker, region = 'US', apiKey = '', targetCurrency = 'USD') => {
   const response = await apiClient.get(`/analyze/${ticker}`, {
-    params: { country_code: region, api_key: apiKey },
+    params: { country_code: region, api_key: apiKey, target_currency: targetCurrency },
   });
   return response.data;
 };
 
 export const getRiskProfile = async (ticker) => (await apiClient.get(`/risk/${ticker}`)).data;
 export const getFundamentals = async (ticker) => (await apiClient.get(`/fundamentals/${ticker}`)).data;
-export const comparePeers = async (baseTicker, peers) =>
-  (await apiClient.get(`/compare`, { params: { base_ticker: baseTicker, peers } })).data;
+export const comparePeers = async (baseTicker, peers, targetCurrency = 'USD') =>
+  (await apiClient.get(`/compare`, { params: { base_ticker: baseTicker, peers, target_currency: targetCurrency } })).data;
 
 // ---- Authenticated endpoints (ID token attached automatically) ----
 export const syncUser = async () => (await apiClient.post('/auth/sync')).data;

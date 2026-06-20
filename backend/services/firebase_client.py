@@ -75,6 +75,12 @@ def get_db():
 
 
 def verify_id_token(id_token: str) -> dict:
-    """Verify a Firebase-issued ID token (raises on invalid/expired)."""
+    """Verify a Firebase-issued ID token (raises on invalid/expired).
+    clock_skew_seconds tolerates minor host clock drift between Render and Google,
+    which otherwise surfaces as spurious 'token used too early' rejections."""
     init_firebase()  # ensures the Admin app exists before auth calls
-    return fb_auth.verify_id_token(id_token)
+    try:
+        return fb_auth.verify_id_token(id_token, clock_skew_seconds=10)
+    except TypeError:
+        # Older firebase-admin without the clock_skew_seconds kwarg.
+        return fb_auth.verify_id_token(id_token)

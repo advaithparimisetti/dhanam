@@ -227,6 +227,69 @@ def compute_beta(ticker: str, benchmark: str = "^GSPC", period: str = "2y"):
         return None
 
 
+# ---------------------------------------------------------------------------
+# Foreign-exchange normalization
+# ---------------------------------------------------------------------------
+# Some venues quote share PRICE in a minor unit (GBp = pence) while market cap
+# and financial statements are in the MAJOR unit (GBP). We resolve the ISO major
+# code + a minor→major factor so callers can normalize price-like fields before
+# any FX conversion. FX rates come from yfinance currency pairs (e.g. EURUSD=X),
+# with inverse-pair and USD-triangulation fallbacks, all guarded (None on fail).
+
+_MINOR_UNIT = {
+    "GBP": ("GBP", 1.0), "GBX": ("GBP", 0.01), "GBp": ("GBP", 0.01),
+    "ZAC": ("ZAR", 0.01), "ZAc": ("ZAR", 0.01),
+    "ILA": ("ILS", 0.01), "ILa": ("ILS", 0.01),
+}
+
+
+def resolve_currency(ccy: str):
+    """Return (major_iso_code, price_minor_factor). e.g. 'GBp' -> ('GBP', 0.01)."""
+    if not ccy:
+        return "USD", 1.0
+    c = ccy.strip()
+    if c in _MINOR_UNIT:
+        return _MINOR_UNIT[c]
+    return c.upper(), 1.0
+
+
+def _fx_pair_last(pair: str):
+    df = get_price_history(pair, period="5d", interval="1d")
+    if df is not None and not df.empty and "Close" in df:
+        v = df["Close"].dropna()
+        if not v.empty:
+            val = float(v.iloc[-1])
+            if _math.isfinite(val) and val > 0:
+                return val
+    return None
+
+
+def get_fx_rate(from_ccy: str, to_ccy: str, _depth: int = 0):
+    """Live FX multiplier: amount_in_from * rate = amount_in_to. Returns None if
+    no reliable rate is obtainable (callers then skip conversion gracefully)."""
+    f, _ = resolve_currency(from_ccy)
+    t, _ = resolve_currency(to_ccy)
+    if f == t:
+        return 1.0
+
+    direct = _fx_pair_last(f"{f}{t}=X")          # e.g. EURUSD=X gives EUR→USD
+    if direct:
+        return direct
+    inverse = _fx_pair_last(f"{t}{f}=X")
+    if inverse:
+        return 1.0 / inverse
+
+    # Triangulate through USD (one hop; guard against recursion).
+    if _depth == 0 and f != "USD" and t != "USD":
+        a = get_fx_rate(f, "USD", _depth=1)
+        b = get_fx_rate("USD", t, _depth=1)
+        if a and b:
+            rate = a * b
+            if 1e-6 < rate < 1e6:
+                return rate
+    return None
+
+
 def get_financial_statements(ticker: str) -> dict:
     """Fetches the three annual statements as DataFrames (most-recent column
     first), each independently guarded so a single failure never aborts the set."""

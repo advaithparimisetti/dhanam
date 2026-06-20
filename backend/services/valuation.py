@@ -39,6 +39,8 @@ from services.data_client import (
     get_financial_statements,
     get_price_history,
     compute_beta,
+    resolve_currency,
+    get_fx_rate,
 )
 from services.utils import safe_numeric, SECTOR_PE_MAP
 
@@ -450,14 +452,111 @@ def score_multibagger(info):
 
 
 # ---------------------------------------------------------------------------
+# FX normalization
+# ---------------------------------------------------------------------------
+def _scale(v, factor):
+    return v * factor if (v is not None and factor != 1.0) else v
+
+
+def _mul(d, key, rate, dp=4):
+    v = d.get(key)
+    if v is not None:
+        try:
+            d[key] = round(float(v) * rate, dp)
+        except (TypeError, ValueError):
+            pass
+
+
+def _apply_fx(res, rate, display_ccy):
+    """Convert every MONETARY field in the result by `rate` and stamp the display
+    currency. Ratios, percentages, growth, beta, WACC and counts are dimensionless
+    and deliberately left untouched."""
+    if rate is None:
+        rate = 1.0
+    res["currency"] = display_ccy
+    for k in ("price", "market_cap", "intrinsic_value"):
+        _mul(res, k, rate, dp=2)
+
+    val = res.get("valuation") or {}
+    dcf = val.get("dcf")
+    if isinstance(dcf, dict):
+        for k in ("intrinsic_value_per_share", "current_price", "base_ufcf", "net_debt"):
+            _mul(dcf, k, rate, dp=2)
+        comp = dcf.get("ufcf_components")
+        if isinstance(comp, dict):
+            for k in ("revenue", "ebit", "d_and_a", "capex", "change_in_nwc"):
+                _mul(comp, k, rate, dp=0)
+    mc = val.get("monte_carlo")
+    if isinstance(mc, dict):
+        for k in ("mean", "median", "std_dev"):
+            _mul(mc, k, rate, dp=2)
+        pct = mc.get("percentiles")
+        if isinstance(pct, dict):
+            for k in list(pct.keys()):
+                _mul(pct, k, rate, dp=2)
+        ci = mc.get("confidence_interval_90")
+        if isinstance(ci, list):
+            mc["confidence_interval_90"] = [round(float(x) * rate, 2) if x is not None else x for x in ci]
+    mult = val.get("multiples")
+    if isinstance(mult, dict):
+        _mul(mult, "enterprise_value", rate, dp=0)
+
+    for row in res.get("history", []):
+        for k in ("open", "high", "low", "close"):
+            _mul(row, k, rate, dp=4)
+    return res
+
+
+def normalize_peer_currency(peer: dict, target_ccy: str) -> dict:
+    """FX-normalize a single /compare peer row so the matrix is apples-to-apples.
+    Converts price / market_cap / enterprise_value; leaves the multiples (which
+    are ratios) untouched. Handles minor price units (pence) before FX."""
+    base_major, factor = resolve_currency(peer.get("currency") or "USD")
+    target = (target_ccy or "USD").upper()
+
+    price = safe_numeric(peer.get("price"))
+    if price is not None and factor != 1.0:
+        price = price * factor          # pence → pounds before FX
+
+    rate, disp = 1.0, base_major
+    if target != base_major:
+        r = get_fx_rate(base_major, target)
+        if r:
+            rate, disp = r, target
+
+    if price is not None:
+        peer["price"] = round(price * rate, 4)
+    for k in ("market_cap", "enterprise_value"):
+        v = safe_numeric(peer.get(k))
+        if v is not None:
+            peer[k] = round(v * rate, 2)
+    peer["currency"] = disp
+    peer["fx_rate"] = round(rate, 6)
+    return peer
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
-def run_playbook(ticker_input: str, country_code: str, api_key: str):
-    info, used_variant = fetch_info_with_variants(ticker_input, country_code, api_key)
+def run_playbook(ticker_input: str, country_code: str, api_key: str, target_currency: str = "USD"):
+    info_raw, used_variant = fetch_info_with_variants(ticker_input, country_code, api_key)
+    # fetch_info_with_variants is lru_cached → copy before mutating, never corrupt the cache.
+    info = dict(info_raw)
+
+    # Resolve minor price units (e.g. GBp pence) to the major ISO currency so ALL
+    # internal math is consistent — statement-derived intrinsic value is in major
+    # units, so the comparison price must be too (fixes a latent GBp DCF bug).
+    base_major, minor_factor = resolve_currency(info.get("currency") or "USD")
+    if minor_factor != 1.0:
+        p = safe_numeric(info.get("regularMarketPrice"))
+        if p is not None:
+            info["regularMarketPrice"] = p * minor_factor
+    info["currency"] = base_major
+
     u_score, u_details = score_undervalued(info)
     m_score, m_details = score_multibagger(info)
 
-    # --- Price history (extended to 5y for technical subplots) ---
+    # --- Price history (5y); apply the minor-unit factor so charts match price ---
     hist_df = get_price_history(used_variant, period="5y", interval="1d")
     history_data = []
     if hist_df is not None and not hist_df.empty:
@@ -466,14 +565,14 @@ def run_playbook(ticker_input: str, country_code: str, api_key: str):
         for date, row in tmp.iterrows():
             history_data.append({
                 "date": date,
-                "open": safe_numeric(row.get("Open")),
-                "high": safe_numeric(row.get("High")),
-                "low": safe_numeric(row.get("Low")),
-                "close": safe_numeric(row.get("Close")),
+                "open": _scale(safe_numeric(row.get("Open")), minor_factor),
+                "high": _scale(safe_numeric(row.get("High")), minor_factor),
+                "low": _scale(safe_numeric(row.get("Low")), minor_factor),
+                "close": _scale(safe_numeric(row.get("Close")), minor_factor),
                 "volume": safe_numeric(row.get("Volume")),
             })
 
-    # --- Institutional valuation stack (fully guarded) ---
+    # --- Institutional valuation stack (fully guarded), all in MAJOR base ccy ---
     valuation = {}
     intrinsic_val = None
     try:
@@ -502,12 +601,12 @@ def run_playbook(ticker_input: str, country_code: str, api_key: str):
             intrinsic_val = round((future_eps * 15) / ((1 + 0.09) ** 5), 2)
             valuation.setdefault("dcf", {})["intrinsic_fallback"] = "graham_proxy"
 
-    return {
+    res = {
         "ticker_requested": ticker_input,
         "ticker_used": used_variant,
         "company": info.get("shortName") or used_variant,
         "price": safe_numeric(info.get("regularMarketPrice")),
-        "currency": info.get("currency", "USD"),
+        "currency": base_major,
         "market_cap": safe_numeric(info.get("marketCap")),
         "sector": info.get("sector", "Unknown"),
         "undervalued_score": u_score,
@@ -519,3 +618,22 @@ def run_playbook(ticker_input: str, country_code: str, api_key: str):
         "history": history_data,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+    # --- FX: normalize all monetary outputs from major base ccy → requested target.
+    requested = (target_currency or "USD").upper()
+    if requested == base_major:
+        rate, disp = 1.0, base_major
+    else:
+        r = get_fx_rate(base_major, requested)
+        rate, disp = (r, requested) if r else (1.0, base_major)   # FX down → show native, flag it
+    res = _apply_fx(res, rate, disp)
+    res["fx"] = {
+        "base_currency": base_major,
+        "requested_currency": requested,
+        "display_currency": disp,
+        "rate": round(rate, 6),
+        "converted": disp == requested and requested != base_major,
+        "note": None if disp == requested else
+                f"Live FX {base_major}->{requested} unavailable; values shown in {base_major}.",
+    }
+    return res

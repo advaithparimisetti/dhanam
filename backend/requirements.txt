@@ -9,3 +9,4 @@ lxml>=5.0.0
 yfinance>=0.2.40
 PyJWT>=2.8.0
 firebase-admin>=6.5.0
+slowapi>=0.1.9

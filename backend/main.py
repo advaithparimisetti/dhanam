@@ -2,6 +2,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.routes import router as api_router
+from core.rate_limit import limiter, HAS_SLOWAPI
 
 app = FastAPI(
     title="Dhanaṁ Engine API",
@@ -9,20 +10,32 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# CORS: localhost defaults for dev, plus any production origins from env.
-# ALLOWED_ORIGINS is a comma-separated list, e.g.
-#   https://dhanam.vercel.app,https://www.dhanam.app
-_default_origins = ["http://localhost:3000", "http://localhost:5173"]
-_env_origins = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()]
-allowed_origins = list(dict.fromkeys(_default_origins + _env_origins))  # de-duped, order-preserving
+# ---- Strict CORS ----
+# Production: set ALLOWED_ORIGINS to your exact Vercel URL(s), comma-separated,
+#   e.g. ALLOWED_ORIGINS=https://dhanam-three.vercel.app
+# When that env var is present we allow ONLY those origins (rejecting everything
+# else). Localhost is used solely as a fallback for local development when the
+# env var is unset — it never widens the policy in production.
+_env_origins = [o.strip().rstrip("/") for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()]
+allowed_origins = _env_origins if _env_origins else ["http://localhost:5173", "http://localhost:3000"]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=allowed_origins,                 # explicit allow-list, never "*"
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+    max_age=600,
 )
+
+# ---- Rate limiting (slowapi) ----
+# Register the shared limiter + the 429 handler. Guarded so a missing/broken
+# slowapi install degrades to no-op limits instead of crashing the server.
+app.state.limiter = limiter
+if HAS_SLOWAPI:
+    from slowapi import _rate_limit_exceeded_handler
+    from slowapi.errors import RateLimitExceeded
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.include_router(api_router, prefix="/api/v1")
 

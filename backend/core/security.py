@@ -28,6 +28,9 @@ def get_current_user(
         decoded = verify_id_token(token)
     except FirebaseUnavailable:
         raise HTTPException(status_code=503, detail="Authentication backend not configured.")
+    except fb_auth.CertificateFetchError:
+        # Transient: Google public-key fetch failed. Signal retry, don't 401.
+        raise HTTPException(status_code=503, detail="Auth temporarily unavailable. Retry shortly.")
     except fb_auth.ExpiredIdTokenError:
         raise HTTPException(status_code=401, detail="Session expired. Please sign in again.")
     except (fb_auth.RevokedIdTokenError, fb_auth.InvalidIdTokenError):

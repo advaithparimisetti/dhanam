@@ -21,7 +21,8 @@ const PeerComparison = ({ data }) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await comparePeers(data.ticker, peerInput);
+      // Keep the peer matrix in the same currency as the main analysis view.
+      const res = await comparePeers(data.ticker, peerInput, data.currency || 'USD');
       setPeers(res.peers);
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to fetch peer data.');

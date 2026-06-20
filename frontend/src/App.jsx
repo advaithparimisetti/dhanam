@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
-import { Search, TrendingUp, AlertTriangle, Activity, BarChart2, Shield, Layers, Users, Database, LogIn, LogOut, Star, Check, Bookmark } from 'lucide-react';
+import { Search, TrendingUp, AlertTriangle, Activity, BarChart2, Shield, Layers, Users, Database, LogIn, LogOut, Star, Check, Bookmark, ArrowLeftRight } from 'lucide-react';
 import { analyzeStock, addToWatchlist } from './api/client';
+import { sym } from './components/common/ui';
 import { useAuth } from './context/AuthContext';
+
+const CURRENCIES = ['USD', 'EUR', 'INR', 'GBP'];
 import AuthModal from './components/auth/AuthModal';
 import Watchlist from './components/dashboard/Watchlist';
 import MetricCard from './components/common/MetricCard';
@@ -18,6 +21,7 @@ function App() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
+  const [currency, setCurrency] = useState('USD');   // FX target for all monetary figures
 
   // ---- Auth + watchlist UI state ----
   const { user, loading: authLoading, logout } = useAuth();
@@ -28,14 +32,15 @@ function App() {
 
   const openAuth = (mode = 'login') => { setAuthMode(mode); setAuthOpen(true); };
 
-  const handleAnalyze = async (searchTicker) => {
+  const handleAnalyze = async (searchTicker, ccyOverride) => {
     const targetTicker = searchTicker || ticker;
     if (!targetTicker.trim()) return;
+    const ccy = ccyOverride || currency;     // explicit override avoids stale state on currency switch
     setStatus('loading');
     setError(null);
     setSaveState('idle');
     try {
-      const result = await analyzeStock(targetTicker.toUpperCase());
+      const result = await analyzeStock(targetTicker.toUpperCase(), 'US', '', ccy);
       setData(result);
       setStatus('success');
     } catch (err) {
@@ -48,6 +53,26 @@ function App() {
 
   // Re-run analysis for a saved ticker selected from the watchlist drawer.
   const handleWatchlistSelect = (t) => { setTicker(t); handleAnalyze(t); };
+
+  // Switch FX currency — re-run the current analysis in the new currency immediately.
+  const changeCurrency = (c) => {
+    if (c === currency) return;
+    setCurrency(c);
+    if (status === 'success' && data) handleAnalyze(data.ticker, c);
+  };
+
+  const CurrencySelector = () => (
+    <div className="flex items-center rounded-lg border border-white/10 bg-white/5 p-0.5" title="Display currency (FX-normalized)">
+      {CURRENCIES.map((c) => (
+        <button key={c} onClick={() => changeCurrency(c)}
+          className={`rounded-md px-2.5 py-1.5 text-xs font-semibold tracking-wide transition-colors ${
+            currency === c ? 'bg-dhanam-primary text-white' : 'text-dhanam-text-mid hover:text-dhanam-text-hi'
+          }`}>
+          {c}
+        </button>
+      ))}
+    </div>
+  );
 
   // Save the current analysis (ticker + frozen valuation snapshot) to Firestore.
   const handleSave = async () => {
@@ -112,7 +137,7 @@ function App() {
   if (status === 'idle') {
     view = (
       <div className="min-h-screen bg-[#050B08] text-white flex flex-col items-center justify-center p-4 relative overflow-hidden">
-        <div className="absolute top-4 right-4 z-20"><AuthControls /></div>
+        <div className="absolute top-4 right-4 z-20 flex items-center gap-2"><CurrencySelector /><AuthControls /></div>
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] md:w-[800px] h-[600px] md:h-[800px] bg-green-900/10 rounded-full blur-[120px] pointer-events-none"></div>
 
         <div className="z-10 w-full max-w-2xl text-center flex flex-col items-center px-4">
@@ -179,6 +204,7 @@ function App() {
                 placeholder="Search another ticker..."
               />
             </div>
+            <CurrencySelector />
             <AuthControls />
           </div>
         </nav>
@@ -209,8 +235,19 @@ function App() {
                   <div className="md:text-right">
                     <div className="text-xs md:text-sm text-gray-400 mb-1">Current Price</div>
                     <div className="text-3xl md:text-4xl font-bold text-white tracking-tight">
-                      {data.currency === 'USD' ? '$' : data.currency + ' '}{data.price?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      {sym(data.currency)}{data.price?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </div>
+                    {data.fx?.converted && (
+                      <div className="mt-1 flex items-center justify-start gap-1 text-[11px] text-dhanam-text-lo md:justify-end" title="Live FX normalization">
+                        <ArrowLeftRight className="h-3 w-3" />
+                        FX {data.fx.base_currency}→{data.fx.display_currency} @ {Number(data.fx.rate).toFixed(4)}
+                      </div>
+                    )}
+                    {data.fx?.note && (
+                      <div className="mt-1 text-[11px] text-dhanam-warn md:text-right" title={data.fx.note}>
+                        Shown in {data.fx.display_currency} (live FX unavailable)
+                      </div>
+                    )}
                   </div>
                   {/* Save to Watchlist */}
                   <button
@@ -231,7 +268,7 @@ function App() {
 
               {/* Core Snapshot Bento Grid */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8 md:mb-10 w-full">
-                <MetricCard title="Market Cap" value={`${data.currency === 'USD' ? '$' : ''}${(data.market_cap / 1e9).toFixed(2)}B`} icon={<BarChart2 className="w-4 h-4 md:w-5 md:h-5 text-gray-500" />} />
+                <MetricCard title="Market Cap" value={`${sym(data.currency)}${(data.market_cap / 1e9).toFixed(2)}B`} icon={<BarChart2 className="w-4 h-4 md:w-5 md:h-5 text-gray-500" />} />
                 <MetricCard title="Value Score" value={`${data.scores.undervalued_score}/40`} highlight icon={<Shield className="w-4 h-4 md:w-5 md:h-5 text-gray-500" />} />
                 <MetricCard title="Growth Score" value={`${data.scores.multibagger_score}/50`} highlight icon={<TrendingUp className="w-4 h-4 md:w-5 md:h-5 text-gray-500" />} />
                 <MetricCard title="P/E Ratio" value={data.scores.details?.pe ? data.scores.details.pe.toFixed(2) : 'N/A'} icon={<Activity className="w-4 h-4 md:w-5 md:h-5 text-gray-500" />} />
