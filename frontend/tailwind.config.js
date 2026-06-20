@@ -10,6 +10,8 @@ export default {
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],
         mono: ['Roboto Mono', 'ui-monospace', 'monospace'],
+        // Elegant editorial serif for the Dhanaṁ wordmark / brand headings.
+        serif: ['"Playfair Display"', 'Georgia', 'Cambria', 'serif'],
       },
       colors: {
         dhanam: {

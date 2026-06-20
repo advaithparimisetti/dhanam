@@ -1,33 +1,44 @@
-import os
-import secrets
-import jwt
-from datetime import datetime, timezone, timedelta
+"""
+Authentication = Firebase ID-token verification.
+
+The frontend (Firebase JS SDK) is the source of identity; it sends the Google-
+signed ID token as `Authorization: Bearer <token>`. The backend verifies it with
+the Admin SDK and resolves the caller's UID/profile. This replaces the previous
+local HS256 session-token scheme.
+"""
+
 from fastapi import HTTPException, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-security = HTTPBearer()
+from firebase_admin import auth as fb_auth
+from services.firebase_client import verify_id_token, FirebaseUnavailable
 
-JWT_SECRET_KEY = os.environ.get("APP_JWT_SECRET", secrets.token_hex(32))
-JWT_ALGORITHM = "HS256"
-JWT_EXPIRY_HOURS = 8
+bearer_scheme = HTTPBearer(auto_error=True)
 
-def generate_session_token(user_id: str = "local_user") -> str:
-    now = datetime.now(timezone.utc)
-    payload = {
-        "sub": user_id,
-        "iat": now,
-        "exp": now + timedelta(hours=JWT_EXPIRY_HOURS),
-        "jti": secrets.token_hex(16),
-        "scope": "equity_research",
-    }
-    return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
-def validate_token(credentials: HTTPAuthorizationCredentials = Security(security)) -> str:
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
+) -> dict:
+    """FastAPI dependency → returns the verified user, or raises 401/503.
+
+    Use on any protected route:  `user: dict = Depends(get_current_user)`
+    """
     token = credentials.credentials
     try:
-        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
-        return payload["sub"]
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Session expired. Please refresh.")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid session token.")
+        decoded = verify_id_token(token)
+    except FirebaseUnavailable:
+        raise HTTPException(status_code=503, detail="Authentication backend not configured.")
+    except fb_auth.ExpiredIdTokenError:
+        raise HTTPException(status_code=401, detail="Session expired. Please sign in again.")
+    except (fb_auth.RevokedIdTokenError, fb_auth.InvalidIdTokenError):
+        raise HTTPException(status_code=401, detail="Invalid authentication token.")
+    except Exception:
+        raise HTTPException(status_code=401, detail="Could not validate credentials.")
+
+    return {
+        "uid": decoded["uid"],
+        "email": decoded.get("email"),
+        "name": decoded.get("name"),
+        "picture": decoded.get("picture"),
+        "provider": decoded.get("firebase", {}).get("sign_in_provider"),
+    }

@@ -5,7 +5,9 @@ from pydantic import BaseModel
 from typing import Dict, Any, Optional, List
 from services.valuation import run_playbook
 from services.risk import get_risk_profile
-from core.security import generate_session_token, validate_token
+from core.security import get_current_user
+from services.firebase_client import FirebaseUnavailable
+from services import watchlist as wl_repo
 
 router = APIRouter()
 
@@ -22,10 +24,57 @@ class AnalysisResponse(BaseModel):
     valuation: Optional[Dict[str, Any]] = None   # full DCF / Monte Carlo / CCA stack
     history: List[Dict[str, Any]] = []
 
-@router.get("/auth/token")
-def get_token():
-    """Generates a JWT session token for frontend clients."""
-    return {"access_token": generate_session_token(), "token_type": "bearer"}
+# ===========================================================================
+# Authentication & Watchlist (Firebase ID-token protected)
+# ===========================================================================
+class SnapshotIn(BaseModel):
+    price: Optional[float] = None
+    intrinsicValue: Optional[float] = None
+    upsidePct: Optional[float] = None
+    wacc: Optional[float] = None
+    mc: Optional[Dict[str, Any]] = None
+    asOf: Optional[str] = None
+
+
+class WatchlistAdd(BaseModel):
+    ticker: str
+    exchange: Optional[str] = None
+    currency: Optional[str] = "USD"
+    note: Optional[str] = ""
+    snapshot: Optional[SnapshotIn] = None
+
+
+def _firestore_guard(fn, *args):
+    """Run a repository call, translating Firebase outages into clean 5xx."""
+    try:
+        return fn(*args)
+    except FirebaseUnavailable:
+        raise HTTPException(status_code=503, detail="Database backend not configured.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+
+@router.post("/auth/sync")
+def sync_user(user: dict = Depends(get_current_user)):
+    """Upsert the user profile on login. Called by the frontend right after
+    onAuthStateChanged fires with a signed-in user."""
+    return _firestore_guard(wl_repo.upsert_user, user)
+
+
+@router.get("/watchlist")
+def list_watchlist(user: dict = Depends(get_current_user)):
+    return {"items": _firestore_guard(wl_repo.get_watchlist, user["uid"])}
+
+
+@router.post("/watchlist")
+def add_watchlist(item: WatchlistAdd, user: dict = Depends(get_current_user)):
+    payload = item.model_dump()
+    return _firestore_guard(wl_repo.add_to_watchlist, user["uid"], payload)
+
+
+@router.delete("/watchlist/{ticker}")
+def delete_watchlist(ticker: str, user: dict = Depends(get_current_user)):
+    return _firestore_guard(wl_repo.remove_from_watchlist, user["uid"], ticker)
 
 @router.get("/analyze/{ticker}", response_model=AnalysisResponse)
 def analyze_stock(
