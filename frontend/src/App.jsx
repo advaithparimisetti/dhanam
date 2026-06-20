@@ -328,6 +328,12 @@ function App() {
             </div>
           )}
         </main>
+
+        {/* Disclaimer footer */}
+        <footer className="w-full border-t border-white/[0.06] bg-black/30 py-3 px-4 text-center text-[11px] text-dhanam-text-lo">
+          ⚠️ <span className="font-semibold text-yellow-500/80">EDUCATIONAL USE ONLY</span>
+          {' — '}This tool is a valuation simulation and does not constitute financial advice.
+        </footer>
       </div>
     );
   }
