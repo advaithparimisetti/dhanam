@@ -36,6 +36,16 @@ export default {
         bento: '0 8px 24px -12px rgba(0,0,0,0.6)',
         glow: '0 0 0 1px rgba(45,122,62,0.4), 0 0 24px -4px rgba(45,122,62,0.35)',
       },
+      animation: {
+        shake: 'shake 0.55s cubic-bezier(.36,.07,.19,.97) both',
+      },
+      keyframes: {
+        shake: {
+          '0%, 100%': { transform: 'translateX(0)' },
+          '15%, 45%, 75%': { transform: 'translateX(-5px)' },
+          '30%, 60%, 90%': { transform: 'translateX(5px)' },
+        },
+      },
     },
   },
   plugins: [],

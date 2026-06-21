@@ -23,6 +23,8 @@ function App() {
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
   const [currency, setCurrency] = useState('USD');   // FX target for all monetary figures
+  const [shakeBar, setShakeBar] = useState(false);
+  const [showTip, setShowTip] = useState(false);
 
   const { pro, setPro } = useMode();   // global Beginner/Pro display mode
 
@@ -38,17 +40,28 @@ function App() {
   const handleAnalyze = async (searchTicker, ccyOverride) => {
     const targetTicker = searchTicker || ticker;
     if (!targetTicker.trim()) return;
-    const ccy = ccyOverride || currency;     // explicit override avoids stale state on currency switch
+    const ccy = ccyOverride || currency;
+    const prevStatus = status;
+    const prevData = data;
     setStatus('loading');
     setError(null);
     setSaveState('idle');
+    setShowTip(false);
     try {
       const result = await analyzeStock(targetTicker.toUpperCase(), 'US', '', ccy);
       setData(result);
       setStatus('success');
-    } catch (err) {
-      setError(err.response?.data?.detail || 'An error occurred fetching data from the backend.');
-      setStatus('error');
+    } catch {
+      setShakeBar(true);
+      setShowTip(true);
+      setTimeout(() => setShakeBar(false), 600);
+      // Restore previous view instead of showing an ugly error state
+      if (prevStatus === 'idle' || !prevData) {
+        setStatus('idle');
+      } else {
+        setData(prevData);
+        setStatus(prevStatus);
+      }
     }
   };
 
@@ -167,7 +180,7 @@ function App() {
 
           <div className="relative w-full max-w-xl group">
             <div className="absolute inset-0 bg-gradient-to-r from-[#2D7A3E] to-[#1B4D2B] rounded-2xl blur-lg opacity-30 group-hover:opacity-50 transition duration-500"></div>
-            <div className="relative flex flex-col md:flex-row items-center bg-[#0A120E] border border-white/10 rounded-2xl p-2 shadow-2xl focus-within:border-[#2D7A3E]/50 transition-colors">
+            <div className={`relative flex flex-col md:flex-row items-center bg-[#0A120E] rounded-2xl p-2 shadow-2xl transition-colors border ${shakeBar ? 'animate-shake border-red-500/60' : 'border-white/10 focus-within:border-[#2D7A3E]/50'}`}>
               <div className="flex items-center w-full">
                 <Search className="w-5 h-5 text-gray-500 ml-3 md:ml-4" />
                 <input
@@ -187,6 +200,15 @@ function App() {
                 Analyze
               </button>
             </div>
+            {showTip && (
+              <p className="mt-3 text-center text-xs text-dhanam-text-lo animate-in fade-in duration-300">
+                <span className="font-medium text-dhanam-warn">Tip:</span>{' '}
+                For international stocks, add the exchange suffix — e.g.,{' '}
+                <span className="font-mono text-dhanam-text-mid">RELIANCE.NS</span>,{' '}
+                <span className="font-mono text-dhanam-text-mid">TSCO.L</span>,{' '}
+                <span className="font-mono text-dhanam-text-mid">SAP.DE</span>
+              </p>
+            )}
           </div>
         </div>
       </div>
@@ -217,9 +239,19 @@ function App() {
                 value={ticker}
                 onChange={(e) => setTicker(e.target.value)}
                 onKeyDown={handleKeyDown}
-                className="w-full bg-white/5 border border-white/10 rounded-lg pl-9 md:pl-10 pr-4 py-2 text-sm text-white focus:outline-none focus:border-[#2D7A3E] transition-colors uppercase placeholder:normal-case"
+                className={`w-full bg-white/5 rounded-lg pl-9 md:pl-10 pr-4 py-2 text-sm text-white focus:outline-none transition-colors uppercase placeholder:normal-case border ${shakeBar ? 'animate-shake border-red-500/60' : 'border-white/10 focus:border-[#2D7A3E]'}`}
                 placeholder="Search another ticker..."
               />
+              {showTip && (
+                <p className="absolute top-full left-0 z-50 mt-1.5 whitespace-nowrap text-[11px] text-dhanam-text-lo animate-in fade-in duration-300">
+                  <span className="font-medium text-dhanam-warn">Tip:</span>{' '}
+                  Try{' '}
+                  <span className="font-mono">RELIANCE.NS</span>,{' '}
+                  <span className="font-mono">TSCO.L</span>,{' '}
+                  <span className="font-mono">SAP.DE</span>{' '}
+                  for international stocks.
+                </p>
+              )}
             </div>
             <ModeToggle />
             <CurrencySelector />
@@ -228,13 +260,6 @@ function App() {
         </nav>
 
         <main className="w-full mx-auto px-4 md:px-12 py-6 md:py-8">
-          {status === 'error' && (
-            <div className="bg-red-900/20 border border-red-500/30 rounded-xl p-4 text-red-200 mb-8 flex items-center gap-3">
-              <AlertTriangle className="text-red-500 w-6 h-6 shrink-0" />
-              <p className="text-sm md:text-base">{error}</p>
-              <button onClick={() => setStatus('idle')} className="ml-auto underline text-sm hover:text-white shrink-0">Return</button>
-            </div>
-          )}
 
           {status === 'success' && data && (
             <div className="w-full animate-in fade-in slide-in-from-bottom-8 duration-700">
