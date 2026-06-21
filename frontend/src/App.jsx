@@ -175,7 +175,7 @@ function App() {
             Dhanaṁ
           </h1>
           <p className="text-gray-400 text-base md:text-xl mb-8 md:mb-12 max-w-lg font-light">
-            Automated institutional equity research and valuation engine.
+            Your equity research rabbit hole
           </p>
 
           <div className="relative w-full max-w-xl group">
