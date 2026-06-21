@@ -51,7 +51,7 @@
 
 ## 1. Project Overview
 
-Dhanaṁ (Sanskrit: धनम्, meaning *wealth*) is a full-stack, institutional-grade automated equity research and valuation platform. It takes any publicly traded stock ticker and produces a complete investment research dossier — DCF valuation, quantitative risk profiling, technical trend analysis, peer benchmarking, fundamental statement breakdown, and a composite 40-point Playbook quality score — entirely from free, publicly available data sources.
+Dhanaṁ (Telugu: ధనం, meaning *wealth*) is a full-stack, institutional-grade automated equity research and valuation platform. It takes any publicly traded stock ticker and produces a complete investment research dossier — DCF valuation, quantitative risk profiling, technical trend analysis, peer benchmarking, fundamental statement breakdown, and a composite 40-point Playbook quality score — entirely from free, publicly available data sources.
 
 **Core philosophy:**
 - **100% free data** — yfinance/Yahoo Finance, SEC EDGAR, FRED. No paid data keys required.
@@ -1364,6 +1364,3 @@ Layer 6 — Secrets:   Service account never on disk in production (B64 env var)
 10. **Firebase free tier (Spark plan) limits**: Firestore has 50,000 reads/day and 20,000 writes/day on the free plan. Sufficient for a side project; would require upgrading to Blaze for scale.
 
 ---
-
-*Documentation generated June 2026 — Dhanaṁ v1.0*  
-*Built by Advaitha Parimisetti, incoming MSc Finance candidate, UCD Smurfit School of Business*
